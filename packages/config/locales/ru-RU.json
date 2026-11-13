@@ -1,0 +1,504 @@
+{
+    "commands": {
+        "developers": {
+            "eval": {
+                "description": "Выполнить код JavaScript",
+                "errorString": "Ошибка",
+                "noCode": "Код не был предоставлен.",
+                "inputString": "Ввод",
+                "outputString": "Выход",
+                "usage": "{prefix}eval <код>"
+            },
+            "login": {
+                "description": "Управление сессией входа Google для аутентификации cookies YouTube",
+                "usage": "{prefix}login <start | status | logout>",
+                "slashStartDescription": "Начать сессию входа Google через браузер",
+                "slashStatusDescription": "Проверить текущий статус сессии входа",
+                "slashLogoutDescription": "Закрыть сессию браузера",
+                "invalidSubcommand": "Использование: {loginUsage}",
+                "alreadyLoggedIn": "Вход уже выполнен. Используйте {logoutCmd} для начала новой сессии.",
+                "launching": "Запуск браузера для входа в Google...",
+                "sessionTitle": "Сессия входа Google",
+                "sessionDescription": "Окно браузера открылось. Войдите в свой аккаунт Google там.",
+                "step1WithUrl": "1. Найдите окно браузера, которое только что появилось на сервере",
+                "step1Fallback": "1. Найдите окно браузера, которое только что появилось на сервере",
+                "step2WithUrl": "2. Войдите в свой аккаунт Google",
+                "step2Fallback": "2. Если удалённо, откройте DevTools через `chrome://inspect` и добавьте {target}",
+                "step3": "3. Завершение входа будет обнаружено автоматически",
+                "step4": "4. URL удалённого DevTools: {url} (опционально)",
+                "timeLimit": "У вас есть {minutes} минут для завершения входа.",
+                "loginSuccess": "Вход Успешен",
+                "loginSuccessDescription": "Успешный вход{email}.\n\nCookies экспортированы и сохранены.\nYouTube должен теперь работать без проблем обнаружения бота.",
+                "loginSuccessEmail": " как {email}",
+                "loginFailed": "Вход Не Удался",
+                "loginFailedDescription": "Время входа истекло или вход был отменён.\n\nИспользуйте {cmd} для повторной попытки.",
+                "loginError": "Ошибка Входа",
+                "loginErrorDescription": "Во время входа произошла ошибка:\n{error}",
+                "statusTitle": "Статус Входа и Cookies",
+                "logoutSuccess": "Сессия входа очищена.\n\nВсе cookies и данные профиля были удалены.\nИспользуйте {cmd} для начала новой сессии.",
+                "logoutNoBrowser": "Нет активной сессии входа.",
+                "cookieFileField": "Файл Cookie",
+                "statusActive": "Активен",
+                "statusMissing": "Нет доступных cookies",
+                "sizeLabel": "Размер",
+                "lastRefreshLabel": "Последнее обновление",
+                "lastRefreshNever": "Никогда",
+                "googleLoginField": "Вход в Google",
+                "sessionLoggedIn": "Выполнен вход",
+                "sessionWaiting": "Ожидание входа...",
+                "sessionError": "Ошибка: {error}",
+                "sessionIdle": "Не запущено",
+                "accountLabel": "Аккаунт",
+                "accountNA": "`N/A`",
+                "gettingStartedField": "Начало работы",
+                "gettingStartedText": "Используйте {loginCmd} для входа в Google и автоматической генерации cookies.",
+                "statsTitle": "Статистика"
+            },
+            "dbExport": {
+                "description": "Экспортировать всю базу данных в файл JSON",
+                "success": "База данных успешно экспортирована!",
+                "totalRecords": "Всего записей",
+                "savedTo": "Также сохранено в: `{path}`",
+                "failed": "Не удалось экспортировать базу данных: {error}"
+            },
+            "dbImport": {
+                "description": "Импортировать базу данных из файла JSON",
+                "usage": "{prefix}db-import [вложение | url | имя файла]",
+                "slashFileDescription": "JSON файл для импорта",
+                "slashUrlDescription": "URL до файла JSON (или имя файла в папке data)",
+                "provideJson": "Пожалуйста, предоставьте файл JSON.",
+                "provideJsonHint": "Пожалуйста, предоставьте файл JSON через вложение, URL или имя файла в папке data.",
+                "invalidFormat": "Неверный формат экспорта базы данных.",
+                "success": "База данных успешно импортирована!",
+                "totalRecords": "Всего записей",
+                "exportDate": "Дата экспорта",
+                "version": "Версия",
+                "failed": "Не удалось импортировать базу данных: {error}"
+            },
+            "setup": {
+                "description": "Настройка параметров бота (только для разработчиков)",
+                "usage": "{prefix}setup <параметр> [значение]",
+                "unknownSetting": "Неизвестный параметр. Используйте {command} для просмотра доступных параметров.",
+                "embedTitle": "Настройки бота",
+                "embedColor": {
+                    "set": "Цвет вставки установлен на {color}",
+                    "reset": "Цвет вставки сброшен на значение по умолчанию.",
+                    "invalid": "Недопустимый шестнадцатеричный код цвета. Используйте 6-символьный шестнадцатеричный код (например: `#FF5733` или `FF5733`)."
+                },
+                "yesEmoji": {
+                    "set": "Эмодзи успеха установлен на {emoji}",
+                    "reset": "Эмодзи успеха сброшен на значение по умолчанию."
+                },
+                "noEmoji": {
+                    "set": "Эмодзи ошибки установлен на {emoji}",
+                    "reset": "Эмодзи ошибки сброшен на значение по умолчанию."
+                },
+                "altPrefix": {
+                    "set": "Альтернативные префиксы установлены на: {prefixes}",
+                    "reset": "Альтернативные префиксы сброшены на значения по умолчанию.",
+                    "invalid": "Пожалуйста, укажите хотя бы один префикс."
+                },
+                "splash": {
+                    "set": "Изображение канала запросов установлено.",
+                    "reset": "Изображение канала запросов сброшено на значение по умолчанию.",
+                    "invalid": "Пожалуйста, укажите действительный URL."
+                },
+                "defaultVolume": {
+                    "set": "Громкость по умолчанию установлена на {volume}",
+                    "reset": "Громкость по умолчанию сброшена.",
+                    "invalid": "Громкость должна быть числом от `1` до `200`"
+                },
+                "selectionType": {
+                    "set": "Тип выбора музыки установлен на {type}",
+                    "reset": "Тип выбора музыки сброшен на значение по умолчанию.",
+                    "invalid": "Тип выбора должен быть `message` или `selectmenu`"
+                },
+                "audioCache": {
+                    "set": "Аудиокэш был {state}",
+                    "enabled": "включён",
+                    "disabled": "отключён"
+                },
+                "searchProvider": {
+                    "set": "Провайдер поиска установлен на {provider}",
+                    "reset": "Провайдер поиска сброшен на значение по умолчанию (`DSP`).",
+                    "invalid": "Провайдер поиска должен быть `dsp` или `direct`"
+                },
+                "resetAll": "Все настройки бота сброшены на значения по умолчанию.",
+                "alwaysOn": {
+                    "set": "Режим Всегда Включен (24/7) был {state}",
+                    "enabled": "включен",
+                    "disabled": "отключен"
+                }
+            }
+        },
+        "general": {
+            "about": {
+                "aboutFooter": "{botname} - Информация о боте",
+                "botUptimeString": "Время работы бота",
+                "botVersionString": "Версия бота",
+                "cachedUsersString": "Кэшированные пользователи",
+                "channelsString": "Каналы",
+                "commitString": "Совершить",
+                "description": "Показать информацию о боте",
+                "discordJSVersionString": "Версия discord.js",
+                "ffmpegVersionString": "Версия FFmpeg",
+                "nodeVersionString": "Версия Node.js",
+                "osUptimeString": "Время работы ОС",
+                "processUptimeString": "Время работы процесса",
+                "serversString": "Сервера",
+                "sourceCodeString": "Исходный код"
+            },
+            "help": {
+                "aliasesString": "Псевдонимы",
+                "authorString": "{username} - Список Команд",
+                "commandDetailTitle": "{username} - Информация о команде {command}",
+                "commandSelectionString": "Пожалуйста выберите команду",
+                "commandUsageFooter": "<> = обязательно | [] = необязательно {devOnly}",
+                "description": "Показывает список команд или информацию об отдельной команде",
+                "descriptionString": "Описание",
+                "disabledSelection": "Здесь нечего выбирать",
+                "footerString": "{prefix}помощь <command> чтобы получить дополнительную информацию о конкретной команде",
+                "nameString": "Имя",
+                "noAliases": "Нет.",
+                "noCommandSuggest": "Не удалось найти команду с таким названием. Вы имели ввиду это?",
+                "noCommand": "Не удалось найти команду с таким названием.",
+                "slashDescription": "Название команды для просмотра конкретной информации о команде",
+                "usage": "{prefix}help [команда]",
+                "usageString": "Использование"
+            },
+            "invite": {
+                "clickURL": "- **[Нажмите здесь]({url})** чтобы пригласить бота{botNum} на свой сервер.",
+                "description": "Получить ссылку для приглашения бота",
+                "inviteTitle": "{bot} - Ссылка приглашения"
+            },
+            "ping": {
+                "description": "Показывает текущий пинг бота",
+                "footerString": "Задержка: {user}"
+            },
+            "language": {
+                "description": "Изменить язык бота для этого сервера",
+                "noPermission": "Для использования этой команды нужно разрешение **Управление сервером**.",
+                "slashSetDescription": "Установить язык сервера",
+                "slashViewDescription": "Посмотреть текущий язык сервера",
+                "slashResetDescription": "Сбросить на язык по умолчанию",
+                "slashLocaleOption": "Язык для установки",
+                "usage": "{prefix}language <view | set | reset> [язык]",
+                "embedTitle": "Настройки языка",
+                "currentLanguage": "Текущий язык:",
+                "languageSet": "Язык сервера изменён на",
+                "languageReset": "Язык сервера сброшен на:",
+                "invalidLocale": "Неверный язык. Доступные языки:",
+                "availableLocales": "Доступные языки"
+            },
+            "prefix": {
+                "currentPrefix": "Текущий префикс: {prefix}",
+                "description": "Изменить префикс команд для этого сервера",
+                "embedTitle": "Настройки префикса",
+                "noPermission": "Вам нужно разрешение **Управление сервером** для использования этой команды.",
+                "prefixReset": "Префикс был сброшен на: {prefix}",
+                "prefixSet": "Префикс был установлен на: {prefix}",
+                "prefixTooLong": "Префикс не может быть длиннее `10` символов.",
+                "slashPrefixOption": "Новый префикс (максимум `10` символов)",
+                "slashResetDescription": "Сбросить на префикс по умолчанию",
+                "slashSetDescription": "Установить пользовательский префикс для этого сервера",
+                "slashViewDescription": "Посмотреть текущий префикс",
+                "usage": "{prefix}prefix [новый префикс | view | reset]"
+            }
+        },
+        "music": {
+            "dj": {
+                "description": "Поменять настройки функции DJ",
+                "usage": "{prefix}dj <enable | disable | role> [роль]",
+                "disable": "Отключено",
+                "disableText": "Функция DJ была **`Отключена`**",
+                "embedTitle": "Функция DJ",
+                "enable": "Включено",
+                "enableText": "Функция DJ была **`Включена`**",
+                "newRoleText": "новая роль",
+                "noPermission": "Вам нужно разрешение **Управление сервером** для использования этой команды.",
+                "role": {
+                    "current": "Текущая роль DJ: <@&{role}>",
+                    "invalid": "Неверная роль.",
+                    "noRole": "Роль DJ не была указана, пожалуйста укажите ее через {djRoleCmd}",
+                    "success": "Роль DJ была указана: <@&{role}>"
+                },
+                "slashDisableDescription": "Отключить функцию DJ",
+                "slashEnableDescription": "Включить функцию DJ",
+                "slashRoleDescription": "Показать или поменять роль DJ",
+                "slashRoleNewRoleOption": "Новая роль для DJ"
+            },
+            "filter": {
+                "availableFilters": "Доступные фильтры",
+                "currentlyUsedFilters": "Используемые в настоящее время фильтры",
+                "currentState": "Состояние фильтра {filter}: {state}",
+                "description": "Найстройка фильтра песни",
+                "usage": "{prefix}filter <enable | disable | status> [фильтр]",
+                "embedFooter": "To {opstate} the filter, use {prefix}filter {opstate} {filter}",
+                "filterSet": "Новое состояние фильтра {filter}: {state}",
+                "filterRestartedFooter": "Песня перезапущена с начала (аудио ещё загружалось).",
+                "filterNoQueueFooter": "Фильтр применится когда вы начнёте воспроизведение музыки.",
+                "slashStateDescription": "{state, select, enable {Enable} other {Disable}} a song filter",
+                "slashStateFilterDescription": "The song filter that will be {state, select, enable {enabled} other {disabled}}",
+                "slashStatusDescription": "Проверьте текущий статус фильтров песен",
+                "slashStatusFilterDescription": "Фильтр который вы хотите проверить",
+                "specifyFilter": "Пожалуйста укажите фильтр."
+            },
+            "lyrics": {
+                "description": "Показать слова из песни",
+                "noLyrics": "Текст для {song} не найден.",
+                "noQuery": "Ничего не проигрывается, или аргументы не были предоставлены.",
+                "searchingLyrics": "Поиск текста песни...",
+                "slashDescription": "Песня для поиска",
+                "usage": "{prefix}lyrics [песня]"
+            },
+            "nowplaying": {
+                "description": "Показать статус воспроизведения",
+                "disableButton": "Предыдущие кнопки больше неактивные и будут удалены.",
+                "pauseResumeButton": "Пауза/Продолжить",
+                "skipButton": "Пропустить",
+                "stopButton": "Остановить",
+                "showQueueButton": "Показать очередь",
+                "emptyQueue": "Очередь пустая.",
+                "error": "Ошибка при получении информации о текущем треке: {message}",
+                "live": "ПРЯМОЙ ЭФИР",
+                "requestedBy": "Запрошено",
+                "unknownDuration": "Неизвестная длительность"
+            },
+            "pause": {
+                "alreadyPause": "Воспроизведение уже на паузе.",
+                "description": "Поставить воспроизведение на паузу",
+                "pauseMessage": "Воспроизведение поставлено на паузу."
+            },
+            "play": {
+                "alreadyPlaying": "Воспроизведение уже активно в канале {voiceChannel}",
+                "description": "Сыграйте музыку",
+                "noSongData": "У этого URL нету данных о песне.",
+                "slashQueryDescription": "Запрос для поиска",
+                "usage": "{prefix}play <запрос | url>"
+            },
+            "queue": {
+                "description": "Показать очередь"
+            },
+            "remove": {
+                "description": "Удалить песню из очереди",
+                "noPermission": "У вас нету разрешения чтобы использовать эту команду.",
+                "noPositions": "Пожалуйста укажите позицию песни в очереди чтобы удалить.",
+                "slashPositionsDescription": "Расположение удаляемых песен разделенных запятой или пробелом",
+                "songSkip": "Текущая песня была удалена, пропуск.\n\n",
+                "songsRemoved": "Удалено {removed} песен из очереди.",
+                "usage": "{prefix}remove <позиции>"
+            },
+            "repeat": {
+                "actualMode": "Текущий повторный режим: {mode}",
+                "description": "Повторить текущую песню или очередь",
+                "footer": "Чтобы поменять режим, смотрите {prefix}help repeat",
+                "newMode": "Режим повтора был установлен на: {mode}",
+                "slashDisable": "Отключить режим повтора",
+                "slashQueue": "Указать режим повтора для **`Очереди`**",
+                "slashSong": "Указать режим повтора для **`Песни`**",
+                "usage": "{prefix}repeat <{options}>"
+            },
+            "resume": {
+                "alreadyResume": "Воспроизведение не стоит на паузе.",
+                "description": "Возобновить воспроизведение",
+                "resumeMessage": "Воспроизведение возобновлено."
+            },
+            "search": {
+                "cancelMessage": "Напишите {cancel} или `c` чтобы отменить выбор песни.",
+                "canceledMessage": "Выбор песни отменен.",
+                "description": "Сыграйте песню использую предоставленную очередь",
+                "disabledSelection": "Здесь нечего выбирать",
+                "interactionContent": "Пожалуйста выберите какую-то песню",
+                "interactionPlaceholder": "Пожалуйста выберите какую-то песню",
+                "noQuery": "Пожалуйста предоставьте очередь чтобы искать.",
+                "noSelection": "Не введено или является недопустимым значением, выбор музыки отменен.",
+                "noTracks": "Не удалось получить результаты поиска.",
+                "queueEmbed": "Пожалуйста выберите какую-то песню; вы можете выбрать несколько вариантов используя пробел или {separator}.\n",
+                "slashQueryDescription": "Запрос для поиска",
+                "slashSourceDescription": "Откуда следует брать музыку?",
+                "trackSelectionMessage": "Выбор Музыки",
+                "usage": "{prefix}search <запрос> [источник]"
+            },
+            "shuffle": {
+                "actualState": "Текущий режим перемешивания: {state}",
+                "description": "Установка режима для функции перемешивания",
+                "newState": "Режим перемешивания теперь установлен на: {state}"
+            },
+            "autoplay": {
+                "actualState": "Текущий режим автовоспроизведения: {state}",
+                "description": "Включение или отключение автовоспроизведения",
+                "newState": "Режим автовоспроизведения теперь установлен на: {state}"
+            },
+            "seek": {
+                "cantSeekLive": "Невозможно перемотать в прямых трансляциях.",
+                "cantSeekSoundcloud": "Невозможно перемотать треки SoundCloud.",
+                "description": "Перейти к определённому времени в текущей песне",
+                "exceedsDuration": "Время перемотки превышает длительность песни ({duration}).",
+                "invalidTime": "Неверный формат времени: {time}. Используйте форматы вроде `1:30` или `90`",
+                "noPlaying": "Сейчас не воспроизводится ни одна песня.",
+                "noTime": "Пожалуйста, укажите время для перемотки.",
+                "notCached": "Пока невозможно перемотать эту песню. Подождите, пока аудио буферизируется.",
+                "seeked": "Перемотано к {time}",
+                "slashTimeDescription": "Время для перемотки (напр., `1:30` или `90`)",
+                "usage": "{prefix}seek <время>",
+                "waitingForCache": "Подождите, аудио всё ещё буферизируется..."
+            },
+            "skip": {
+                "description": "Пропустить песню",
+                "skipMessage": "Пропущена {song}",
+                "voteResultMessage": "{length}/{required} проголосовали за то чтобы пропустить текущую песню."
+            },
+            "skipTo": {
+                "cantPlay": "Вы не можете перейти к текущей музыке.",
+                "description": "Пропуск до указанной позиции в очереди",
+                "invalidPosition": "Пожалуйста, укажите правильный номер позиции.",
+                "noPermission": "У вас нету разрешения чтобы использовать эту команду.",
+                "noSongPosition": "Невозможно найти песню в такой позиции.",
+                "skipMessage": "Пропущено к {song}",
+                "slashFirstDescription": "Перемотать назад к первой песне в очереди",
+                "slashLastDescription": "Пропустить к последней песне в очереди",
+                "slashPositionDescription": "Позиция песни в очереди",
+                "slashSpecificDescription": "Пропустить до указанной позиции в очереди",
+                "usage": "{prefix}skipto <{options} | number>"
+            },
+            "stop": {
+                "description": "Остановить воспроизведение",
+                "stoppedMessage": "Воспроизведение остановлено."
+            },
+            "volume": {
+                "changeVolume": "Чтобы изменить громкость, укажите номер громкости при использовании этой команды.",
+                "currentVolume": "Текущая громкость: {volume}",
+                "description": "Изменить громкость воспроизведения",
+                "newVolume": "Громкость была установлена на: {volume}",
+                "noPermission": "Вам нужна роль DJ или разрешение **Управление сервером**, чтобы устанавливать громкость выше `100%`",
+                "plsPause": "Поставьте воспроизведение на паузу вместо установки громкости на {volume}",
+                "slashDescription": "Новая громкость",
+                "usage": "{prefix}volume [новая громкость]"
+            },
+            "requestChannel": {
+                "description": "Настройка канала запросов для музыки",
+                "noPermission": "Вам нужно разрешение **Управление сервером** для использования этой команды.",
+                "invalidChannel": "Пожалуйста, укажите действительный текстовый канал.",
+                "noBotPermissions": "Не удалось проверить права для этого канала.",
+                "missingBotPermissions": "В этом канале не хватает следующих прав: {permissions}",
+                "failedToSetup": "Не удалось настроить канал запросов. Проверьте права канала.",
+                "alreadyHasChannel": "На этом сервере уже настроен канал запросов {channel}. Пожалуйста, сначала удалите его, прежде чем настраивать новый.",
+                "channelAlreadyInUse": "Этот канал уже используется как канал запросов.",
+                "noChannelToRemove": "Нет настроенного канала запросов для удаления.",
+                "slashSetDescription": "Установить канал как канал запросов",
+                "slashRemoveDescription": "Удалить канал запросов",
+                "slashStatusDescription": "Показать текущий канал запросов",
+                "slashChannelDescription": "Канал для установки как канал запросов",
+                "usage": "{prefix}requestchannel <set | remove | status> [channel]"
+            }
+        }
+    },
+    "events": {
+        "channelUpdate": {
+            "connectionReconfigured": "Соединение успешно перенастроено.",
+            "reconfigureConnection": "Изменен регион голосового канала, повторная настройка соединения...",
+            "unableReconfigureConnection": "Невозможно повторно настроить подключение, очередь была удалена."
+        },
+        "createInteraction": {
+            "message1": "Извините, но это взаимодействие предназначено только для <@{user}> и персонала сервера.",
+            "devOnly": "Команда только для разработчиков.",
+            "lyricsCommandNotFound": "Команда lyrics не найдена.",
+            "wrongBot": "Эту команду должен выполнять {botMention} как основной бот этого сервера.",
+            "primaryBotFallback": "основной бот"
+        },
+        "createMessage": "Привет {author}, префикс: {prefix}",
+        "cmdLoading": "Загрузка...",
+        "voiceStateUpdate": {
+            "connectionReconfigured": "Соединение успешно перенастроено.",
+            "deleteQueue": "{duration} пройдена и никто не присоединился к голосовому каналу, очередь была удалена.",
+            "deleteQueueFooter": "Очередь удалена",
+            "disconnectFromVCMessage": "Отключен от голосового канала, очередь была удалена.",
+            "joinStageMessage": "Успешно присоединился к сцене в качестве спикера.",
+            "joiningAsSpeaker": "Перешел на канал сцены, пытаясь присоединиться в качестве спикера...",
+            "pauseQueue": "Все покинули голосовой канал. Для экономии ресурсов очередь была приостановлена.\nесли никто не подключится к голосовому каналу в течение следующего {duration}, очередь будет удалена.",
+            "pauseQueueFooter": "Очередь на паузе",
+            "pauseRequesterDeaf": "У {requester} отключен звук, приостанавливаю {song}. Если звук не будет включен в течение {duration}, треки этого пользователя будут удалены из очереди.",
+            "pauseRequesterLeft": "{requester} покинул голосовой канал, приостанавливаю {song}. Если пользователь не вернется в течение {duration}, его треки будут удалены из очереди.",
+            "removeRequesterDeaf": "{requester} не включил звук в течение {duration}, из очереди удалено {count} трек(ов).",
+            "removeRequesterLeft": "{requester} не вернулся в течение {duration}, из очереди удалено {count} трек(ов).",
+            "resumeRequesterDeaf": "Запросивший включил звук.\nВозобновление {song}",
+            "resumeRequesterLeft": "Запросивший вернулся в голосовой канал.\nВозобновление {song}",
+            "reconfigureConnection": "Переход в голосовой канал с другим регионом, повторная настройка соединения...",
+            "resumeQueue": "Кто-то присоединился к голосовому каналу.\nВозобновление {song}",
+            "resumeQueueFooter": "Очередь возобновлена",
+            "unableJoinStageMessage": "Невозможно присоединиться в качестве спикера, очередь была удалена.",
+            "unableReconfigureConnection": "Невозможно повторно настроить подключение, очередь была удалена."
+        }
+    },
+    "requestChannel": {
+        "title": "Музыкальный плеер",
+        "standby": "Музыка не воспроизводится. Отправьте название песни или URL чтобы начать!",
+        "status": "Повтор",
+        "shuffle": "Перемешать",
+        "autoplay": "Автовоспроизведение",
+        "volume": "Громкость",
+        "queueFooter": "Осталось треков в очереди: {count} ({duration} длительности)",
+        "live": "ПРЯМОЙ ЭФИР",
+        "songDuration": "Продолжительность",
+        "requestedBy": "Запросил",
+        "unknown": "Неизвестно",
+        "notInVoice": "Вы должны быть в голосовом канале чтобы запросить музыку.",
+        "deafened": "Перед запросом музыки нужно включить звук.",
+        "requesterDeafPaused": "У запросившего отключен звук. Воспроизведение продолжится, когда звук будет включен.",
+        "requesterLeftPaused": "Запросивший покинул голосовой канал. Воспроизведение продолжится, когда он вернется.",
+        "noResults": "По вашему запросу ничего не найдено.",
+        "addedToQueue": "Добавлено {song} в очередь.",
+        "resolvingPlaylist": "Загрузка плейлиста, подождите…",
+        "addingPlaylistToQueue": "Добавление в очередь: {current}/{total}…",
+        "addedPlaylistToQueue": "Добавлено {count} песен из {playlist} в очередь.",
+        "queueListTitle": "Список очереди",
+        "emptyQueue": "Очередь пуста.",
+        "nothingPlaying": "Сейчас ничего не воспроизводится.",
+        "setChannel": "Канал запросов установлен на {channel}",
+        "removeChannel": "Канал запросов удален.",
+        "noChannel": "Канал запросов не установлен.",
+        "currentChannel": "Текущий канал запросов: {channel}",
+        "skipInProgress": "Пожалуйста подождите, операция пропуска выполняется.",
+        "noPermission": "У вас нет разрешения на выполнение этого действия. Только роль DJ, менеджеры сервера или тот, кто запросил песню, могут это сделать.",
+        "addedPlaylistSkipped": "Пропущено {count} элемент(ов): {reason}.",
+        "skippedReasonUnavailable": "приватное/удалённое или недоступное",
+        "skippedReasonUnresolved": "не удалось сопоставить с воспроизводимой песней",
+        "skippedReasonSkipped": "дубликат, приватное/удалённое или недоступное",
+        "resolvingSong": "Загрузка песни, подождите…"
+    },
+    "reusable": {
+        "invalidUsage": "Неверное использование, пожалуйста используйте {prefix} {name} для большей информации.",
+        "pageFooter": "Страница {actual} из {total}",
+        "lyricsSource": "Источник: {source}",
+        "enabled": "Включено",
+        "disabled": "Отключено"
+    },
+    "utils": {
+        "commonUtil": {
+            "botMissingChannelPerms": "В {channel} не хватает следующих разрешений: {permissions}"
+        },
+        "cooldownMessage": "{author}, пожалуйста подождите {timeleft} чтобы использовать эту команду.",
+        "generalHandler": {
+            "errorJoining": "Ошибка при подключении к голосовому каналу, потому-что: {message}",
+            "errorPlaying": "При попытке воспроизвести музыку произошла ошибка, потому-что: {message}",
+            "handleVideoInitial": "Добавлено {length} песен в очередь.",
+            "leftVC": "Выход из голосового канала из-за долгой неактивности.",
+            "queueEnded": "Очередь закончилась, используйте {usage} чтобы воспроизвести больше музыки.",
+            "startPlaying": "Играет: {song}",
+            "stopPlaying": "Остановлено проигрывание: {song}",
+            "songRequeued": "Возникла проблема с воспроизведением {song}, добавлено обратно в очередь для повторной попытки.",
+            "allCookiesFailed": "Все cookies неудачны из-за обнаружения бота! Используйте {logoutCmd}, затем {startCmd} для повторного входа.",
+            "ageRestricted": "Невозможно воспроизвести {song}, так как она имеет возрастное ограничение и требует входа в систему."
+        },
+        "musicDecorator": {
+            "noInVC": "Извините, но для этого вам нужно быть в голосовом канале.",
+            "noQueue": "Ничего не воспроизводится.",
+            "notPlaying": "В данный момент музыка не воспроизводится. Пожалуйста, сначала включите песню.",
+            "sameVC": "Вы должны быть в том же голосовом канале.",
+            "useRequestChannel": "Пожалуйста, используйте канал запросов {channel} для музыкальных команд.",
+            "useRequestChannelDirect": "Эта команда отключена в канале запросов. Используйте элементы управления или введите название/ссылку песни напрямую.",
+            "validVCJoinable": "Не удалось **`Подключиться`** к вашему голосовому каналу. Убедитесь, что выданы нужные разрешения.",
+            "validVCPermission": "Не удалось **`Говорить`** в этом голосовом канале; убедитесь, что выданы нужные разрешения."
+        }
+    }
+}

@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+dev.env
+.env.example
+node_modules
+**/node_modules
+**/dist
+*.tsbuildinfo
+*.log
+cache
+data
+coverage
+tests
+tmp

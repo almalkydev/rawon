@@ -1,0 +1,20 @@
+Rawon V2 — Architectural Rewrite & Attribution Notice
+
+Original Project: Rawon (https://github.com/stegripe/rawon)
+Original Authors: Stegripe Development (support@stegripe.org)
+Original License: Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International (CC-BY-NC-ND-4.0)
+
+This repository implements an architectural rewrite preserving feature parity with
+Stegripe Rawon v4.7.0 and retaining full attribution and non-commercial license notice
+per the accompanying LICENSE file.
+
+Third-Party Components:
+- discord.js & @discordjs/voice (Apache-2.0)
+- FFmpeg / ffmpeg-static (LGPL/GPL; see https://ffmpeg.org/legal.html)
+- yt-dlp (Unlicense)
+- prism-media (Apache-2.0)
+- opusscript (MIT)
+- PostgreSQL / node-postgres (pg) (MIT)
+- Redis / ioredis (MIT)
+- pino (MIT)
+- zod (MIT)

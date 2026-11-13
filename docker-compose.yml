@@ -1,0 +1,161 @@
+x-rawon-env: &rawon-env
+  NODE_ENV: production
+  DEBUG_MODE: ${DEBUG_MODE:-false}
+  DISCORD_TOKEN: ${DISCORD_TOKEN:-}
+  MAIN_PREFIX: ${MAIN_PREFIX:-!}
+  DEV_PREFIX: ${DEV_PREFIX:-r!}
+  MAIN_SERVER: ${MAIN_SERVER:-}
+  DEVS: ${DEVS:-}
+  LOCALE: ${LOCALE:-en-US}
+  ACTIVITY_TYPES: ${ACTIVITY_TYPES:-Listening,Playing}
+  ACTIVITIES: ${ACTIVITIES:-/help • /play,/setup • Music}
+  ENABLE_PREFIX: ${ENABLE_PREFIX:-true}
+  ENABLE_SLASH_COMMAND: ${ENABLE_SLASH_COMMAND:-true}
+  ENABLE_SHARDING: ${ENABLE_SHARDING:-false}
+  STEGRIPE_API_URL: ${STEGRIPE_API_URL:-https://api.stegripe.org}
+  STEGRIPE_API_LYRICS_TOKEN: ${STEGRIPE_API_LYRICS_TOKEN:-}
+  SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
+  SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
+  SPOTIFY_MARKET: ${SPOTIFY_MARKET:-US}
+  DEVTOOLS_PORT: ${DEVTOOLS_PORT:-9222}
+  CHROMIUM_PATH: ${CHROMIUM_PATH:-}
+  COOKIES_ENCRYPTION_KEY: ${COOKIES_ENCRYPTION_KEY:-}
+  DATABASE_URL: postgres://${POSTGRES_USER:-rawon}:${POSTGRES_PASSWORD:-change_me_strong_password}@postgres:5432/${POSTGRES_DB:-rawon}
+  REDIS_URL: redis://redis:6379
+  CACHE_DIR: /app/cache
+  DATA_DIR: /app/data
+  AUDIO_CACHE_MAX_MB: ${AUDIO_CACHE_MAX_MB:-512}
+  AUDIO_CACHE_MAX_FILES: ${AUDIO_CACHE_MAX_FILES:-100}
+  AUDIO_QUALITY_PROFILE: ${AUDIO_QUALITY_PROFILE:-fidelity}
+  AUDIO_NORMALIZE: ${AUDIO_NORMALIZE:-false}
+  MAX_QUEUE_SIZE: ${MAX_QUEUE_SIZE:-500}
+  RC_RATE_LIMIT_MAX: ${RC_RATE_LIMIT_MAX:-5}
+  RC_RATE_LIMIT_WINDOW_MS: ${RC_RATE_LIMIT_WINDOW_MS:-15000}
+  WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+  METRICS_HOST: 0.0.0.0
+  METRICS_PORT: 9090
+  WORKER_HEALTH_PORT: 9091
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rawon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_strong_password}
+      POSTGRES_DB: ${POSTGRES_DB:-rawon}
+    volumes:
+      - rawon_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rawon} -d ${POSTGRES_DB:-rawon}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - rawon_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+          cpus: "0.5"
+
+  bot:
+    image: rawon-v2:latest
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+    init: true
+    restart: unless-stopped
+    environment:
+      <<: *rawon-env
+    expose:
+      - "9090"
+    ports:
+      - "127.0.0.1:${BOT_METRICS_PORT:-9090}:9090"
+    volumes:
+      - rawon_cache:/app/cache
+      - rawon_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9090/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: "2.0"
+
+  worker:
+    image: rawon-v2:latest
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+    init: true
+    restart: unless-stopped
+    command: ["node", "apps/worker/dist/index.js"]
+    environment:
+      <<: *rawon-env
+    expose:
+      - "9091"
+    volumes:
+      - rawon_cache:/app/cache
+      - rawon_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9091/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: "1.0"
+
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - rawon_promdata:/prometheus
+    ports:
+      - "127.0.0.1:9095:9090"
+    depends_on:
+      - bot
+
+volumes:
+  rawon_pgdata:
+  rawon_redisdata:
+  rawon_cache:
+  rawon_data:
+  rawon_promdata:

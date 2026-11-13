@@ -1,0 +1,504 @@
+{
+    "commands": {
+        "developers": {
+            "eval": {
+                "description": "對代碼進行評估",
+                "errorString": "錯誤",
+                "noCode": "未提供任何代碼。",
+                "inputString": "輸入",
+                "outputString": "輸出",
+                "usage": "{prefix}eval <一些代碼>"
+            },
+            "login": {
+                "description": "管理Google登入工作階段以進行YouTube cookie身份驗證",
+                "usage": "{prefix}login <start | status | logout>",
+                "slashStartDescription": "透過瀏覽器啟動Google登入工作階段",
+                "slashStatusDescription": "檢查目前登入工作階段狀態",
+                "slashLogoutDescription": "關閉瀏覽器工作階段",
+                "invalidSubcommand": "用法：{loginUsage}",
+                "alreadyLoggedIn": "已經登入。請先使用 {logoutCmd} 開始新工作階段。",
+                "launching": "正在啟動瀏覽器以登入Google...",
+                "sessionTitle": "Google登入工作階段",
+                "sessionDescription": "瀏覽器視窗已開啟。請在那裡使用Google帳號登入。",
+                "step1WithUrl": "1. 找到伺服器上剛剛出現的瀏覽器視窗",
+                "step1Fallback": "1. 找到伺服器上剛剛出現的瀏覽器視窗",
+                "step2WithUrl": "2. 使用您的Google帳號登入",
+                "step2Fallback": "2. 如果是遠程，透過 `chrome://inspect` 開啟DevTools並新增 {target}",
+                "step3": "3. 登入完成後會自動偵測",
+                "step4": "4. 遠程DevTools URL: {url}（可選）",
+                "timeLimit": "您有 {minutes}分鐘 完成登入。",
+                "loginSuccess": "登入成功",
+                "loginSuccessDescription": "成功登入{email}。\n\nCookies已匯出並儲存。\nYouTube現在應該可以無機器人偵測問題地運行。",
+                "loginSuccessEmail": "（以 {email} 身份）",
+                "loginFailed": "登入失敗",
+                "loginFailedDescription": "登入逾時或已取消。\n\n使用 {cmd} 重試。",
+                "loginError": "登入錯誤",
+                "loginErrorDescription": "登入時發生錯誤：\n{error}",
+                "statusTitle": "登入與Cookie狀態",
+                "logoutSuccess": "登入工作階段已清除。\n\n所有cookies和設定檔資料已被清除。\n使用 {cmd} 啟動新工作階段。",
+                "logoutNoBrowser": "沒有活躍的登入工作階段。",
+                "cookieFileField": "Cookie檔案",
+                "statusActive": "活躍",
+                "statusMissing": "無可用cookies",
+                "sizeLabel": "大小",
+                "lastRefreshLabel": "上次刷新",
+                "lastRefreshNever": "從未",
+                "googleLoginField": "Google登入",
+                "sessionLoggedIn": "已登入",
+                "sessionWaiting": "等待登入中...",
+                "sessionError": "錯誤：{error}",
+                "sessionIdle": "未啟動",
+                "accountLabel": "帳號",
+                "accountNA": "`N/A`",
+                "gettingStartedField": "開始使用",
+                "gettingStartedText": "使用 {loginCmd} 登入Google並自動產生cookies。",
+                "statsTitle": "統計"
+            },
+            "dbExport": {
+                "description": "將整個資料庫匯出為 JSON 檔案",
+                "success": "資料庫匯出成功！",
+                "totalRecords": "總記錄數",
+                "savedTo": "同時儲存至：`{path}`",
+                "failed": "匯出資料庫失敗：{error}"
+            },
+            "dbImport": {
+                "description": "從 JSON 檔案匯入資料庫",
+                "usage": "{prefix}db-import [附件 | 網址 | 檔名]",
+                "slashFileDescription": "要匯入的 JSON 檔案",
+                "slashUrlDescription": "JSON 檔案的 URL（或 data 資料夾中的檔名）",
+                "provideJson": "請提供一個 JSON 檔案。",
+                "provideJsonHint": "請透過附件、URL 或 data 資料夾中的檔名提供 JSON 檔案。",
+                "invalidFormat": "無效的資料庫匯出格式。",
+                "success": "資料庫匯入成功！",
+                "totalRecords": "總記錄數",
+                "exportDate": "匯出日期",
+                "version": "版本",
+                "failed": "匯入資料庫失敗：{error}"
+            },
+            "setup": {
+                "description": "設定機器人配置（僅限開發者）",
+                "usage": "{prefix}setup <設定> [值]",
+                "unknownSetting": "未知設定。使用 {command} 查看可用設定。",
+                "embedTitle": "機器人設定",
+                "embedColor": {
+                    "set": "嵌入顏色已設定為 {color}。",
+                    "reset": "嵌入顏色已重設為預設值。",
+                    "invalid": "無效的十六進位顏色代碼。請使用6位十六進位代碼（例如：`#FF5733` 或 `FF5733`）。"
+                },
+                "yesEmoji": {
+                    "set": "成功表情已設定為 {emoji}",
+                    "reset": "成功表情已重設為預設值。"
+                },
+                "noEmoji": {
+                    "set": "錯誤表情已設定為 {emoji}",
+                    "reset": "錯誤表情已重設為預設值。"
+                },
+                "altPrefix": {
+                    "set": "替代前綴已設定為：{prefixes}。",
+                    "reset": "替代前綴已重設為預設值。",
+                    "invalid": "請至少提供一個前綴。"
+                },
+                "splash": {
+                    "set": "請求頻道封面圖片已設定。",
+                    "reset": "請求頻道封面圖片已重設為預設值。",
+                    "invalid": "請提供有效的URL。"
+                },
+                "defaultVolume": {
+                    "set": "預設音量已設定為 {volume}。",
+                    "reset": "預設音量已重設為預設值。",
+                    "invalid": "音量必須是 `1` 到 `200` 之間的數字"
+                },
+                "selectionType": {
+                    "set": "音樂選擇類型已設定為 {type}。",
+                    "reset": "音樂選擇類型已重設為預設值。",
+                    "invalid": "選擇類型必須為 `message` 或 `selectmenu`"
+                },
+                "audioCache": {
+                    "set": "音訊快取已 {state}。",
+                    "enabled": "啟用",
+                    "disabled": "停用"
+                },
+                "searchProvider": {
+                    "set": "搜尋提供者已設定為 {provider}",
+                    "reset": "搜尋提供者已重設為預設值 (`DSP`)。",
+                    "invalid": "搜尋提供者必須是 `dsp` 或 `direct`"
+                },
+                "resetAll": "所有機器人設定已重設為預設值。",
+                "alwaysOn": {
+                    "set": "全天候 (24/7) 模式已 {state}",
+                    "enabled": "啟用",
+                    "disabled": "停用"
+                }
+            }
+        },
+        "general": {
+            "about": {
+                "aboutFooter": "{botname} - 機器人資訊",
+                "botUptimeString": "機器人上線時間",
+                "botVersionString": "機器人版本",
+                "cachedUsersString": "緩存用戶",
+                "channelsString": "頻道",
+                "commitString": "提交",
+                "description": "顯示機器人的資訊",
+                "discordJSVersionString": "Discord.js 版本",
+                "ffmpegVersionString": "FFmpeg 版本",
+                "nodeVersionString": "Node.js 版本",
+                "osUptimeString": "OS 上線時間",
+                "processUptimeString": "Process 上線時間",
+                "serversString": "伺服器",
+                "sourceCodeString": "源代碼"
+            },
+            "help": {
+                "aliasesString": "化名",
+                "authorString": "{username} - 指令列表",
+                "commandDetailTitle": "{username} - 關於 {command} 指令資訊",
+                "commandSelectionString": "請選擇指令",
+                "commandUsageFooter": "<> = 必需 | [] = 可選 {devOnly}",
+                "description": "顯示特定指令的指令列表或資訊",
+                "descriptionString": "描述",
+                "disabledSelection": "這裡沒有可選擇的內容",
+                "footerString": "{prefix}help <指令> 獲取更多有關特定指令的資訊",
+                "nameString": "名稱",
+                "noAliases": "無。",
+                "noCommandSuggest": "找不到匹配的指令名稱。 您是這個意思嗎？",
+                "noCommand": "找不到匹配的指令名稱。",
+                "slashDescription": "使用指令名稱查看有關指令的特定信息",
+                "usage": "{prefix}help [指令]",
+                "usageString": "用法"
+            },
+            "invite": {
+                "clickURL": "- **[點擊這裡]({url})** 邀請機器人{botNum} 到您的伺服器。",
+                "description": "獲取機器人的邀請鏈接",
+                "inviteTitle": "{bot} - 邀請鏈接"
+            },
+            "ping": {
+                "description": "顯示當前機器人的ping",
+                "footerString": "延遲時間: {user}"
+            },
+            "language": {
+                "description": "更改此伺服器的機器人語言",
+                "noPermission": "您需要**管理伺服器**權限才能使用此指令。",
+                "slashSetDescription": "設置伺服器語言",
+                "slashViewDescription": "查看當前伺服器語言",
+                "slashResetDescription": "重置為預設語言",
+                "slashLocaleOption": "要設置的語言",
+                "usage": "{prefix}language <view | set | reset> [語言]",
+                "embedTitle": "語言設置",
+                "currentLanguage": "當前語言：",
+                "languageSet": "伺服器語言已更改為",
+                "languageReset": "伺服器語言已重置為：",
+                "invalidLocale": "無效語言。可用語言：",
+                "availableLocales": "可用語言"
+            },
+            "prefix": {
+                "currentPrefix": "目前前綴: {prefix}",
+                "description": "變更此伺服器的指令前綴",
+                "embedTitle": "前綴設定",
+                "noPermission": "您需要**管理伺服器**權限才能使用此指令。",
+                "prefixReset": "前綴已重置為: {prefix}",
+                "prefixSet": "前綴已設定為: {prefix}",
+                "prefixTooLong": "前綴不能超過`10`個字元。",
+                "slashPrefixOption": "新前綴（最多`10`個字元）",
+                "slashResetDescription": "重置為預設前綴",
+                "slashSetDescription": "為此伺服器設定自定義前綴",
+                "slashViewDescription": "查看目前前綴",
+                "usage": "{prefix}prefix [新前綴 | view | reset]"
+            }
+        },
+        "music": {
+            "dj": {
+                "description": "更改 DJ 功能設置",
+                "usage": "{prefix}dj <enable | disable | role> [身分組]",
+                "disable": "停用",
+                "disableText": "DJ 功能已**`停用`**",
+                "embedTitle": "DJ 功能",
+                "enable": "啟用",
+                "enableText": "DJ 功能已**`啟用`**",
+                "newRoleText": "新身分組",
+                "noPermission": "您需要**管理伺服器**權限才能使用此指令。",
+                "role": {
+                    "current": "目前 DJ 身分組: <@&{role}>",
+                    "invalid": "無效的身分組。",
+                    "noRole": "DJ 身分組尚未設定，請使用{djRoleCmd}設置",
+                    "success": "DJ 身分組已設置為 <@&{role}>"
+                },
+                "slashDisableDescription": "停用 DJ 功能",
+                "slashEnableDescription": "啟用  DJ 功能",
+                "slashRoleDescription": "查看或更改 DJ 身分組",
+                "slashRoleNewRoleOption": "新 DJ 身分組"
+            },
+            "filter": {
+                "availableFilters": "可用過濾器",
+                "currentlyUsedFilters": "目前已使用的過濾器",
+                "currentState": "{filter} 目前是 {state}",
+                "description": "配置歌曲過濾器",
+                "usage": "{prefix}filter <enable | disable | status> [過濾器]",
+                "embedFooter": "如 {opstate} 過濾器，請使用 {prefix}filter {opstate} {filter}",
+                "filterSet": "{filter} 過濾器現已 {state}",
+                "filterRestartedFooter": "歌曲從頭開始重播（音訊仍在緩衝中）。",
+                "filterNoQueueFooter": "過濾器將在您開始播放音樂時套用。",
+                "slashStateDescription": "{state, select, enable {啟用} other {停用}}歌曲過濾器",
+                "slashStateFilterDescription": "歌曲過濾器將會 {state, select, enable {啟用} other {停用}}",
+                "slashStatusDescription": "檢查歌曲過濾器的當前狀態",
+                "slashStatusFilterDescription": "您要檢查的歌曲過濾器",
+                "specifyFilter": "請指定歌曲過濾器。"
+            },
+            "lyrics": {
+                "description": "顯示歌曲的歌詞",
+                "noLyrics": "找不到 {song} 的歌詞。",
+                "noQuery": "目前没有播放任何内容，或者沒有提供任何參數。",
+                "searchingLyrics": "正在搜尋歌詞...",
+                "slashDescription": "要搜索的歌曲",
+                "usage": "{prefix}lyrics [歌曲]"
+            },
+            "nowplaying": {
+                "description": "顯示播放狀態",
+                "disableButton": "以前的按鈕不再處於活動狀態並被刪除。",
+                "pauseResumeButton": "暫停/繼續",
+                "skipButton": "跳過",
+                "stopButton": "停止播放",
+                "showQueueButton": "查看佇列",
+                "emptyQueue": "隊列為空。",
+                "error": "取得目前播放資訊時發生錯誤：{message}",
+                "live": "直播",
+                "requestedBy": "請求者",
+                "unknownDuration": "未知長度"
+            },
+            "pause": {
+                "alreadyPause": "播放已暫停。",
+                "description": "暫停播放",
+                "pauseMessage": "播放已暫停。"
+            },
+            "play": {
+                "alreadyPlaying": "已在 {voiceChannel} 語音頻道播放。",
+                "description": "播放一些音樂",
+                "noSongData": "該 URL 沒有任何歌曲數據。",
+                "slashQueryDescription": "查詢搜索",
+                "usage": "{prefix}play <查詢 | url>"
+            },
+            "queue": {
+                "description": "顯示隊列列表"
+            },
+            "remove": {
+                "description": "從隊列中移除歌曲",
+                "noPermission": "你無權使用此指令。",
+                "noPositions": "請指定要移除的歌曲位置。",
+                "slashPositionsDescription": "以逗號或空格分隔指定要移除的歌曲位置",
+                "songSkip": "當前歌曲已移除，歌曲被跳過。\n\n",
+                "songsRemoved": "已從佇列中移除 {removed} 首歌曲。",
+                "usage": "{prefix}remove <位置>"
+            },
+            "repeat": {
+                "actualMode": "目前的重复模式是 {mode}",
+                "description": "重複當前的音樂或隊列",
+                "footer": "如改變模式，請查看 {prefix}help repeat",
+                "newMode": "重複模式已設置為 {mode}",
+                "slashDisable": "停用重複模式",
+                "slashQueue": "重複模式為 **`隊列`**",
+                "slashSong": "重複模式為 **`音樂`**",
+                "usage": "{prefix}repeat <{options}>"
+            },
+            "resume": {
+                "alreadyResume": "播放未暫停。",
+                "description": "恢復播放音樂",
+                "resumeMessage": "播放已恢復。"
+            },
+            "search": {
+                "cancelMessage": "輸入 {cancel} 或 c 取消選曲。",
+                "canceledMessage": "選曲已取消。",
+                "description": "使用已提供的資訊播放一些音樂",
+                "disabledSelection": "這裡沒有可選擇的內容",
+                "interactionContent": "請選擇一些音樂",
+                "interactionPlaceholder": "請選擇一些音樂",
+                "noQuery": "請提供一些資訊以進行搜索。",
+                "noSelection": "未輸入值或輸入無效值，選曲已取消。",
+                "noTracks": "無法獲得任何搜尋結果。",
+                "queueEmbed": "請選擇一些音樂； 您可以使用空格選擇多個或 {separator}.\n",
+                "slashQueryDescription": "查詢搜索",
+                "slashSourceDescription": "應該把音樂帶到哪裡？",
+                "trackSelectionMessage": "選曲",
+                "usage": "{prefix}search <查詢> [來源]"
+            },
+            "shuffle": {
+                "actualState": "當前隨機播放模式是 {state}",
+                "description": "設置隨機播放模式的功能",
+                "newState": "隨機播放模式已設置為{state}"
+            },
+            "autoplay": {
+                "actualState": "自動播放目前為 {state}",
+                "description": "切換自動播放模式",
+                "newState": "自動播放現已設定為 {state}"
+            },
+            "seek": {
+                "cantSeekLive": "無法在直播中跳轉。",
+                "cantSeekSoundcloud": "無法在SoundCloud曲目中跳轉。",
+                "description": "跳轉到當前歌曲的指定時間",
+                "exceedsDuration": "跳轉時間超過歌曲時長 ({duration})。",
+                "invalidTime": "時間格式無效：{time}。請使用 `1:30` 或 `90` 等格式。",
+                "noPlaying": "當前沒有正在播放的歌曲。",
+                "noTime": "請指定要跳轉的時間。",
+                "notCached": "該歌曲暫時無法跳轉。請等待音頻緩衝。",
+                "seeked": "已跳轉到 {time}",
+                "slashTimeDescription": "要跳轉的時間（例如 `1:30` 或 `90`）",
+                "usage": "{prefix}seek <時間>",
+                "waitingForCache": "請稍候，音頻仍在緩衝中..."
+            },
+            "skip": {
+                "description": "略過音樂",
+                "skipMessage": "已略過 {song}",
+                "voteResultMessage": "{length}/{required} 已投票跳過當前歌曲。"
+            },
+            "skipTo": {
+                "cantPlay": "您不能跳到當前音樂。",
+                "description": "跳到隊列中的特定位置",
+                "invalidPosition": "請提供有效的位置編號。",
+                "noPermission": "你無權使用此指令。",
+                "noSongPosition": "無法在該位置找到歌曲。",
+                "skipMessage": "已略過到 {song}",
+                "slashFirstDescription": "倒回到隊列中的第一首歌曲",
+                "slashLastDescription": "跳到隊列中的最後一首歌曲",
+                "slashPositionDescription": "歌曲在隊列中的位置",
+                "slashSpecificDescription": "跳到隊列中的特定位置",
+                "usage": "{prefix}skipto <{options} | 數字>"
+            },
+            "stop": {
+                "description": "停止播放",
+                "stoppedMessage": "播放已停止。"
+            },
+            "volume": {
+                "changeVolume": "如更改音量，請在使用此指令時提供音量數字。",
+                "currentVolume": "目前音量是 {volume}",
+                "description": "更改播放音量",
+                "newVolume": "音量已設置為 {volume}",
+                "noPermission": "您需要DJ身份組或**管理伺服器**權限才能將音量設置為`100%`以上。",
+                "plsPause": "請暫停音樂而不是將音量調到 {volume}",
+                "slashDescription": "新音量",
+                "usage": "{prefix}volume [新音量]"
+            },
+            "requestChannel": {
+                "description": "設定音樂點播頻道",
+                "noPermission": "您需要**管理伺服器**權限才能使用此指令。",
+                "invalidChannel": "請提供有效的文字頻道。",
+                "noBotPermissions": "無法檢查該頻道的權限。",
+                "missingBotPermissions": "該頻道缺少以下權限: {permissions}",
+                "failedToSetup": "設定點播頻道失敗。請檢查頻道權限。",
+                "alreadyHasChannel": "此伺服器已在 {channel} 設定了點播頻道。請先移除它，然後再設定新的。",
+                "channelAlreadyInUse": "此頻道已被用作點播頻道。",
+                "noChannelToRemove": "沒有設定點播頻道可供移除。",
+                "slashSetDescription": "設定頻道為點播頻道",
+                "slashRemoveDescription": "移除點播頻道",
+                "slashStatusDescription": "顯示目前點播頻道",
+                "slashChannelDescription": "要設定為點播頻道的頻道",
+                "usage": "{prefix}requestchannel <set | remove | status> [channel]"
+            }
+        }
+    },
+    "events": {
+        "channelUpdate": {
+            "connectionReconfigured": "已成功重新配置連接。",
+            "reconfigureConnection": "語音通道區域已更改，重新配置連接...",
+            "unableReconfigureConnection": "無法重新配置連接，隊列已被刪除。"
+        },
+        "createInteraction": {
+            "message1": "抱歉，該互動僅限於 <@{user}> 和伺服器權限者。",
+            "devOnly": "僅限開發者的指令。",
+            "lyricsCommandNotFound": "找不到歌詞指令。",
+            "wrongBot": "此指令必須在作為此伺服器主機器人的 {botMention} 上執行。",
+            "primaryBotFallback": "主機器人"
+        },
+        "createMessage": "你好 {author}，前綴：{prefix}",
+        "cmdLoading": "加載中...",
+        "voiceStateUpdate": {
+            "connectionReconfigured": "已成功重新配置連接。",
+            "deleteQueue": "{duration} 已過，沒有人加入語音頻道，隊列已被刪除。",
+            "deleteQueueFooter": "隊列已被刪除",
+            "disconnectFromVCMessage": "與語音通道斷開連接，隊列已被刪除。",
+            "joinStageMessage": "成功以演講者身份加入舞台頻道。",
+            "joiningAsSpeaker": "已移至舞台頻道，正在嘗試以演講者身份加入...",
+            "pauseQueue": "所有人都離開了語音頻道。為了節省資源，隊列已暫停。\n如果在{duration}期內沒有人加入語音頻道，隊列將被刪除。",
+            "pauseQueueFooter": "隊列已暫停",
+            "pauseRequesterDeaf": "{requester} 處於拒聽狀態，正在暫停 {song}。如果他們在 {duration} 內沒有解除拒聽，他們點播的歌曲將從佇列中移除。",
+            "pauseRequesterLeft": "{requester} 離開了語音頻道，正在暫停 {song}。如果他們在 {duration} 內沒有重新加入，他們點播的歌曲將從佇列中移除。",
+            "removeRequesterDeaf": "{requester} 在 {duration} 內沒有解除拒聽，已從佇列中移除 {count} 首歌曲。",
+            "removeRequesterLeft": "{requester} 在 {duration} 內沒有重新加入，已從佇列中移除 {count} 首歌曲。",
+            "resumeRequesterDeaf": "點播者已解除拒聽。\n恢復播放 {song}",
+            "resumeRequesterLeft": "點播者已重新加入語音頻道。\n恢復播放 {song}",
+            "reconfigureConnection": "移動到不同地區的語音通道，重新配置連接...",
+            "resumeQueue": "有人加入了語音頻道。\n恢復中 {song}",
+            "resumeQueueFooter": "隊列已恢復",
+            "unableJoinStageMessage": "無法以演講者身份加入，隊列已被刪除。",
+            "unableReconfigureConnection": "無法重新配置連接，隊列已被刪除。"
+        }
+    },
+    "requestChannel": {
+        "title": "音樂播放器",
+        "standby": "沒有音樂播放中。發送歌曲名稱或URL開始播放！",
+        "status": "循環",
+        "shuffle": "隨機播放",
+        "autoplay": "自動播放",
+        "volume": "音量",
+        "queueFooter": "佇列中剩餘曲目：{count}（{duration} 時長）",
+        "live": "直播",
+        "songDuration": "時長",
+        "requestedBy": "點播者",
+        "unknown": "未知",
+        "notInVoice": "您需要在語音頻道中才能點歌。",
+        "deafened": "點歌前需要先解除拒聽。",
+        "requesterDeafPaused": "點播者處於拒聽狀態。解除拒聽後會繼續播放。",
+        "requesterLeftPaused": "點播者已離開語音頻道。重新加入後會繼續播放。",
+        "noResults": "沒有找到您搜尋的結果。",
+        "addedToQueue": "已將 {song} 添加到佇列。",
+        "resolvingPlaylist": "正在解析播放清單，請稍候…",
+        "addingPlaylistToQueue": "正在新增至佇列：{current}/{total}…",
+        "addedPlaylistToQueue": "已將 {playlist} 中的 {count} 首歌曲添加到佇列。",
+        "queueListTitle": "佇列列表",
+        "emptyQueue": "佇列是空的。",
+        "nothingPlaying": "當前沒有播放任何內容。",
+        "setChannel": "點歌頻道已設置為 {channel}",
+        "removeChannel": "點歌頻道已移除。",
+        "noChannel": "當前沒有設置點歌頻道。",
+        "currentChannel": "當前點歌頻道：{channel}",
+        "skipInProgress": "請稍候，跳過操作正在進行中。",
+        "noPermission": "您沒有權限執行此操作。只有DJ身份組、伺服器管理員或點歌者可以執行此操作。",
+        "addedPlaylistSkipped": "已跳過 {count} 個項目：{reason}。",
+        "skippedReasonUnavailable": "私人/已刪除或無法使用",
+        "skippedReasonUnresolved": "無法匹配到可播放歌曲",
+        "skippedReasonSkipped": "重複、私人/已刪除或無法使用",
+        "resolvingSong": "正在解析歌曲，請稍候…"
+    },
+    "reusable": {
+        "invalidUsage": "無效的用法，請用 {prefix} {name}了解更多資訊。",
+        "pageFooter": "{actual}/{total} 頁",
+        "lyricsSource": "來源: {source}",
+        "enabled": "啟用",
+        "disabled": "停用"
+    },
+    "utils": {
+        "commonUtil": {
+            "botMissingChannelPerms": "{channel} 中缺少以下權限：{permissions}"
+        },
+        "cooldownMessage": "{author}，請稍等 {timeleft}的冷卻時間。",
+        "generalHandler": {
+            "errorJoining": "加入語音通道時出錯，因為: {message}",
+            "errorPlaying": "嘗試播放音樂時出錯，因為: {message}",
+            "handleVideoInitial": "已將 {length} 首歌曲添加到隊列中。",
+            "leftVC": "因長時間未活動，已離開語音頻道。",
+            "queueEnded": "隊列已經結束，使用{usage}播放更多音樂。",
+            "startPlaying": "開始播放{song}",
+            "stopPlaying": "停止播放{song}",
+            "songRequeued": "播放{song}時遇到問題，已重新添加到隊列中等待重試。",
+            "allCookiesFailed": "由於機器人偵測，所有cookie都已失敗！使用 {logoutCmd} 然後 {startCmd} 重新登入。",
+            "ageRestricted": "無法播放 {song}，因為它受到年齡限制並需要登入。"
+        },
+        "musicDecorator": {
+            "noInVC": "抱歉，您需要在語音頻道中才能執行此操作。",
+            "noQueue": "沒有播放任何內容。",
+            "notPlaying": "目前沒有音樂在播放。請先播放一首歌曲。",
+            "sameVC": "你需要在同一個語音頻道。",
+            "useRequestChannel": "請使用點歌頻道 {channel} 來執行音樂指令。",
+            "useRequestChannelDirect": "此命令在請求頻道中已禁用。請使用控制按鈕或直接輸入歌曲名稱/連結。",
+            "validVCJoinable": "無法**`連接`**到你的語音頻道，請確保已授予正確權限。",
+            "validVCPermission": "無法在這個語音頻道**`說話`**；請確保已授予正確權限。"
+        }
+    }
+}

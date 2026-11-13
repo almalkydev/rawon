@@ -1,0 +1,514 @@
+import { type ChildProcess, spawn } from "node:child_process";
+import {
+    chmodSync,
+    copyFileSync,
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
+import { platform } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import type { Readable } from "node:stream";
+import { type Logger, ProviderError, RateLimitError } from "@rawon/shared";
+
+export interface YtDlpFormatEntry {
+    format_id?: string;
+    url?: string;
+    ext?: string;
+    acodec?: string;
+    vcodec?: string;
+    asr?: number;
+    audio_channels?: number;
+    abr?: number;
+    tbr?: number;
+    http_headers?: Record<string, string>;
+}
+
+export interface YtDlpEntry {
+    id?: string;
+    title?: string;
+    fulltitle?: string;
+    url?: string;
+    webpage_url?: string;
+    original_url?: string;
+    duration?: number | null;
+    thumbnail?: string;
+    thumbnails?: Array<{ url?: string; width?: number; height?: number }>;
+    uploader?: string;
+    channel?: string;
+    artist?: string;
+    creator?: string;
+    is_live?: boolean;
+    live_status?: string;
+    _type?: string;
+    entries?: Array<YtDlpEntry | null> | null;
+    playlist_title?: string;
+    playlist?: string;
+    ext?: string;
+    acodec?: string;
+    vcodec?: string;
+    asr?: number;
+    audio_channels?: number;
+    abr?: number;
+    http_headers?: Record<string, string>;
+    requested_formats?: YtDlpFormatEntry[];
+    formats?: YtDlpFormatEntry[];
+}
+
+export interface YtDlpDumpOptions {
+    flatPlaylist?: boolean;
+    noPlaylist?: boolean;
+    yesPlaylist?: boolean;
+    playlistEnd?: number;
+    playlistStart?: number;
+    format?: string;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+}
+
+export interface YtDlpClientOptions {
+    binaryPath?: string | null;
+    cacheDir: string;
+    cookiesPath?: string | null;
+    visitorData?: string | null;
+    logger?: Logger;
+}
+
+export function classifyYtDlpError(stderr: string): ProviderError | RateLimitError {
+    const lower = stderr.toLowerCase();
+    if (
+        lower.includes("sign in to confirm you’re not a bot") ||
+        lower.includes("sign in to confirm you're not a bot") ||
+        lower.includes("confirm you are not a bot")
+    ) {
+        return new ProviderError(
+            "YouTube requested bot-verification cookies",
+            "bot_detection",
+            false,
+            new Error(stderr),
+        );
+    }
+    if (lower.includes("sign in to confirm your age") || lower.includes("age-restricted")) {
+        return new ProviderError(
+            "Track is age-restricted and requires authenticated cookies",
+            "age_restricted",
+            false,
+            new Error(stderr),
+        );
+    }
+    if (lower.includes("429") || lower.includes("too many requests")) {
+        return new RateLimitError("Provider rate-limited request (HTTP 429)", 5_000);
+    }
+    if (
+        lower.includes("video unavailable") ||
+        lower.includes("private video") ||
+        lower.includes("this video has been removed") ||
+        lower.includes("copyright")
+    ) {
+        return new ProviderError(
+            "Track is unavailable or private",
+            "unavailable",
+            false,
+            new Error(stderr),
+        );
+    }
+    return new ProviderError(
+        stderr.trim() || "yt-dlp failed without output",
+        "network",
+        true,
+        new Error(stderr),
+    );
+}
+
+export class YtDlpClient {
+    private binaryPath: string;
+    private readonly scriptsDir: string;
+    private cookiesPath: string | null;
+    private visitorData: string | null;
+    private readonly logger?: Logger;
+    private updateTimer: NodeJS.Timeout | null = null;
+
+    public constructor(options: YtDlpClientOptions) {
+        this.scriptsDir = resolve(options.cacheDir, "scripts");
+        this.cookiesPath = options.cookiesPath ?? null;
+        this.visitorData = options.visitorData ?? null;
+        this.logger = options.logger;
+        this.binaryPath = this.resolveInitialBinaryPath(options.binaryPath);
+    }
+
+    public setCookiesPath(path: string | null): void {
+        this.cookiesPath = path;
+    }
+
+    public setVisitorData(visitorData: string | null): void {
+        this.visitorData = visitorData;
+    }
+
+    public getBinaryPath(): string {
+        return this.binaryPath;
+    }
+
+    public isAvailable(): boolean {
+        return this.binaryPath !== "yt-dlp" ? existsSync(this.binaryPath) : true;
+    }
+
+    public async ensureBinary(): Promise<string> {
+        if (this.binaryPath !== "yt-dlp" && existsSync(this.binaryPath)) {
+            return this.binaryPath;
+        }
+        // Check if global yt-dlp exists on PATH
+        const onPath = await this.probeVersion("yt-dlp");
+        if (onPath) {
+            this.binaryPath = "yt-dlp";
+            return this.binaryPath;
+        }
+
+        const isWin = platform() === "win32";
+        const filename = isWin ? "yt-dlp.exe" : "yt-dlp";
+        const localBin = join(this.scriptsDir, filename);
+
+        if (existsSync(localBin)) {
+            this.binaryPath = localBin;
+            return localBin;
+        }
+
+        mkdirSync(this.scriptsDir, { recursive: true });
+        const downloadUrl = isWin
+            ? "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+            : platform() === "darwin"
+              ? "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"
+              : "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
+
+        this.logger?.info({ downloadUrl, target: localBin }, "Downloading yt-dlp binary");
+        const res = await fetch(downloadUrl, { signal: AbortSignal.timeout(60_000) });
+        if (!res.ok) {
+            throw new ProviderError(
+                `Failed to download yt-dlp binary (HTTP ${res.status})`,
+                "network",
+                true,
+            );
+        }
+        const buf = Buffer.from(await res.arrayBuffer());
+        writeFileSync(localBin, buf);
+        if (!isWin) {
+            chmodSync(localBin, 0o755);
+        }
+        this.binaryPath = localBin;
+        return localBin;
+    }
+
+    public startAutoUpdater(isIdle: () => boolean, intervalMs = 1_800_000): void {
+        this.stopAutoUpdater();
+        this.updateTimer = setInterval(() => {
+            if (!isIdle()) return;
+            void this.runUpdate().catch((err) => {
+                this.logger?.debug({ err }, "yt-dlp background update check skipped/failed");
+            });
+        }, intervalMs);
+        this.updateTimer.unref?.();
+    }
+
+    public stopAutoUpdater(): void {
+        if (this.updateTimer) {
+            clearInterval(this.updateTimer);
+            this.updateTimer = null;
+        }
+    }
+
+    public async getVersion(): Promise<string | null> {
+        return this.probeVersion(this.binaryPath);
+    }
+
+    public async dumpJson(target: string, options: YtDlpDumpOptions = {}): Promise<YtDlpEntry> {
+        const args = [
+            "--dump-single-json",
+            "--skip-download",
+            "--quiet",
+            "--no-warnings",
+            "--ignore-errors",
+            "--no-check-certificates",
+            "--js-runtimes",
+            "node",
+        ];
+
+        if (options.format) {
+            args.push("-f", options.format);
+        }
+        if (options.flatPlaylist) args.push("--flat-playlist");
+        if (options.noPlaylist) args.push("--no-playlist");
+        if (options.yesPlaylist) args.push("--yes-playlist");
+        if (options.playlistStart !== undefined)
+            args.push("--playlist-start", String(options.playlistStart));
+        if (options.playlistEnd !== undefined)
+            args.push("--playlist-end", String(options.playlistEnd));
+
+        this.appendAuthArgs(args);
+        args.push("--", target);
+
+        const timeoutMs = options.timeoutMs ?? 25_000;
+        const { stdout, stderr, exitCode } = await this.execCapture(
+            args,
+            timeoutMs,
+            options.signal,
+        );
+
+        if (stdout.trim().length > 0) {
+            try {
+                const parsed = JSON.parse(stdout) as YtDlpEntry;
+                return parsed;
+            } catch (err) {
+                if (stderr.trim()) {
+                    throw classifyYtDlpError(stderr);
+                }
+                throw new ProviderError(
+                    "Failed to parse yt-dlp JSON metadata",
+                    "internal",
+                    true,
+                    err,
+                );
+            }
+        }
+
+        if (stderr.trim()) {
+            throw classifyYtDlpError(stderr);
+        }
+        throw new ProviderError(
+            `yt-dlp exited with code ${exitCode} and empty output`,
+            "network",
+            true,
+        );
+    }
+
+    public spawnAudioStream(
+        targetUrl: string,
+        options: { format?: string; signal?: AbortSignal } = {},
+    ): { stream: Readable; process: ChildProcess; kill: () => void } {
+        const args = [
+            "-f",
+            options.format ?? "bestaudio[acodec=opus]/bestaudio/best",
+            "-o",
+            "-",
+            "--quiet",
+            "--no-warnings",
+            "--no-playlist",
+            "--js-runtimes",
+            "node",
+        ];
+        this.appendAuthArgs(args);
+        args.push("--", targetUrl);
+
+        const child = spawn(this.binaryPath, args, {
+            stdio: ["ignore", "pipe", "pipe"],
+            windowsHide: true,
+        });
+
+        let stderrRing = "";
+        child.stderr?.setEncoding("utf8");
+        child.stderr?.on("data", (chunk: string) => {
+            stderrRing = (stderrRing + chunk).slice(-2048);
+        });
+
+        const kill = () => {
+            if (!child.killed) {
+                child.kill("SIGTERM");
+                const hardTimer = setTimeout(() => {
+                    if (child.exitCode === null) {
+                        child.kill("SIGKILL");
+                    }
+                }, 1_500);
+                hardTimer.unref?.();
+            }
+        };
+
+        if (options.signal) {
+            if (options.signal.aborted) {
+                kill();
+            } else {
+                options.signal.addEventListener("abort", kill, { once: true });
+                child.once("close", () => {
+                    options.signal?.removeEventListener("abort", kill);
+                });
+            }
+        }
+
+        return {
+            stream: child.stdout as Readable,
+            process: child,
+            kill,
+        };
+    }
+
+    private resolveInitialBinaryPath(configured?: string | null): string {
+        if (configured && existsSync(configured)) {
+            return configured;
+        }
+        const isWin = platform() === "win32";
+        const local = join(this.scriptsDir, isWin ? "yt-dlp.exe" : "yt-dlp");
+        if (existsSync(local)) {
+            return local;
+        }
+        return "yt-dlp";
+    }
+
+    private appendAuthArgs(args: string[]): void {
+        if (this.visitorData) {
+            args.push("--extractor-args", `youtube:visitor_data=${this.visitorData}`);
+        }
+        if (this.cookiesPath && existsSync(this.cookiesPath)) {
+            const st = statSync(this.cookiesPath);
+            if (st.size > 0) {
+                const tmpPath = join(dirname(this.cookiesPath), ".ytdlp-tmp-cookies.txt");
+                try {
+                    copyFileSync(this.cookiesPath, tmpPath);
+                    args.push("--cookies", tmpPath);
+                } catch {
+                    args.push("--cookies", this.cookiesPath);
+                }
+            }
+        }
+    }
+
+    private async probeVersion(bin: string): Promise<string | null> {
+        return new Promise((resolve) => {
+            const child = spawn(bin, ["--version"], {
+                stdio: ["ignore", "pipe", "ignore"],
+                windowsHide: true,
+            });
+            let out = "";
+            child.stdout?.setEncoding("utf8");
+            child.stdout?.on("data", (d: string) => {
+                out += d;
+            });
+            child.once("error", () => resolve(null));
+            child.once("close", (code) => {
+                resolve(code === 0 ? out.trim() || null : null);
+            });
+        });
+    }
+
+    private async runUpdate(): Promise<void> {
+        if (this.binaryPath === "yt-dlp") return;
+        await this.execCapture(["-U"], 60_000);
+    }
+
+    private execCapture(
+        args: string[],
+        timeoutMs: number,
+        signal?: AbortSignal,
+    ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+        return new Promise((resolve, reject) => {
+            const child = spawn(this.binaryPath, args, {
+                stdio: ["ignore", "pipe", "pipe"],
+                windowsHide: true,
+            });
+            let stdout = "";
+            let stderr = "";
+            let settled = false;
+
+            const timer = setTimeout(() => {
+                if (!settled) {
+                    settled = true;
+                    child.kill("SIGKILL");
+                    reject(new ProviderError("yt-dlp metadata lookup timed out", "network", true));
+                }
+            }, timeoutMs);
+            timer.unref?.();
+
+            const onAbort = () => {
+                if (!settled) {
+                    settled = true;
+                    clearTimeout(timer);
+                    child.kill("SIGKILL");
+                    reject(new ProviderError("yt-dlp operation aborted", "network", false));
+                }
+            };
+
+            if (signal) {
+                if (signal.aborted) {
+                    onAbort();
+                    return;
+                }
+                signal.addEventListener("abort", onAbort, { once: true });
+            }
+
+            child.stdout?.setEncoding("utf8");
+            child.stdout?.on("data", (chunk: string) => {
+                stdout += chunk;
+            });
+            child.stderr?.setEncoding("utf8");
+            child.stderr?.on("data", (chunk: string) => {
+                stderr = (stderr + chunk).slice(-8192);
+            });
+
+            child.once("error", (err) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                signal?.removeEventListener("abort", onAbort);
+                reject(
+                    new ProviderError(
+                        `Failed to spawn yt-dlp: ${err.message}`,
+                        "internal",
+                        false,
+                        err,
+                    ),
+                );
+            });
+
+            child.once("close", (code) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                signal?.removeEventListener("abort", onAbort);
+                resolve({ stdout, stderr, exitCode: code ?? -1 });
+            });
+        });
+    }
+}
+
+export function extractBestAudioFormat(entry: YtDlpEntry): YtDlpFormatEntry | null {
+    const url = entry.url;
+    if (url && entry.vcodec === "none" && entry.acodec && entry.acodec !== "none") {
+        return {
+            url,
+            ext: entry.ext,
+            acodec: entry.acodec,
+            vcodec: entry.vcodec,
+            asr: entry.asr,
+            audio_channels: entry.audio_channels,
+            abr: entry.abr,
+            http_headers: entry.http_headers,
+        };
+    }
+
+    const candidates = [...(entry.requested_formats ?? []), ...(entry.formats ?? [])].filter(
+        (f) => f.url && f.acodec && f.acodec !== "none" && (!f.vcodec || f.vcodec === "none"),
+    );
+
+    if (candidates.length === 0) {
+        return url
+            ? {
+                  url,
+                  ext: entry.ext,
+                  acodec: entry.acodec,
+                  asr: entry.asr,
+                  audio_channels: entry.audio_channels,
+                  abr: entry.abr,
+                  http_headers: entry.http_headers,
+              }
+            : null;
+    }
+
+    candidates.sort((a, b) => {
+        const aOpus = a.acodec?.toLowerCase().includes("opus") && a.asr === 48_000 ? 1 : 0;
+        const bOpus = b.acodec?.toLowerCase().includes("opus") && b.asr === 48_000 ? 1 : 0;
+        if (aOpus !== bOpus) return bOpus - aOpus;
+        return (b.abr ?? b.tbr ?? 0) - (a.abr ?? a.tbr ?? 0);
+    });
+
+    return candidates[0] ?? null;
+}
+
+export { readFileSync };

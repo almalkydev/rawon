@@ -1,0 +1,504 @@
+{
+    "commands": {
+        "developers": {
+            "eval": {
+                "description": "Evaluar código JavaScript",
+                "errorString": "Error",
+                "noCode": "No se ingresó código.",
+                "inputString": "Entrada",
+                "outputString": "Salida",
+                "usage": "{prefix}eval <código>"
+            },
+            "login": {
+                "description": "Administrar sesión de login de Google para autenticación de cookies de YouTube",
+                "usage": "{prefix}login <start | status | logout>",
+                "slashStartDescription": "Iniciar una sesión de login de Google vía navegador",
+                "slashStatusDescription": "Verificar estado actual de la sesión de login",
+                "slashLogoutDescription": "Cerrar la sesión del navegador",
+                "invalidSubcommand": "Uso: {loginUsage}",
+                "alreadyLoggedIn": "Ya tienes sesión iniciada. Usa {logoutCmd} primero para iniciar una nueva sesión.",
+                "launching": "Lanzando navegador para login de Google...",
+                "sessionTitle": "Sesión de Login de Google",
+                "sessionDescription": "Se ha abierto una ventana del navegador. Inicia sesión con tu cuenta de Google allí.",
+                "step1WithUrl": "1. Busca la ventana del navegador que acaba de aparecer en el servidor",
+                "step1Fallback": "1. Busca la ventana del navegador que acaba de aparecer en el servidor",
+                "step2WithUrl": "2. Inicia sesión con tu cuenta de Google",
+                "step2Fallback": "2. Si es remoto, abre DevTools via `chrome://inspect` y agrega {target}",
+                "step3": "3. La finalización del inicio de sesión se detectará automáticamente",
+                "step4": "4. URL de DevTools remoto: {url} (opcional)",
+                "timeLimit": "Tienes {minutes} minutos para completar el login.",
+                "loginSuccess": "Login Exitoso",
+                "loginSuccessDescription": "Sesión iniciada exitosamente{email}.\n\nLas cookies han sido exportadas y guardadas.\nYouTube debería funcionar ahora sin problemas de detección de bot.",
+                "loginSuccessEmail": " como {email}",
+                "loginFailed": "Login Fallido",
+                "loginFailedDescription": "El login expiró o fue cancelado.\n\nUsa {cmd} para intentar de nuevo.",
+                "loginError": "Error de Login",
+                "loginErrorDescription": "Ocurrió un error durante el login:\n{error}",
+                "statusTitle": "Estado de Login y Cookies",
+                "logoutSuccess": "Sesión de login eliminada.\n\nTodas las cookies y datos de perfil han sido borrados.\nUsa {cmd} para iniciar una sesión nueva.",
+                "logoutNoBrowser": "No hay sesión de login activa.",
+                "cookieFileField": "Archivo de Cookie",
+                "statusActive": "Activo",
+                "statusMissing": "Sin cookies disponibles",
+                "sizeLabel": "Tamaño",
+                "lastRefreshLabel": "Última actualización",
+                "lastRefreshNever": "Nunca",
+                "googleLoginField": "Login de Google",
+                "sessionLoggedIn": "Sesión iniciada",
+                "sessionWaiting": "Esperando inicio de sesión...",
+                "sessionError": "Error: {error}",
+                "sessionIdle": "No iniciado",
+                "accountLabel": "Cuenta",
+                "accountNA": "`N/A`",
+                "gettingStartedField": "Comenzar",
+                "gettingStartedText": "Usa {loginCmd} para iniciar sesión en Google y generar cookies automáticamente.",
+                "statsTitle": "Estadísticas"
+            },
+            "dbExport": {
+                "description": "Exportar toda la base de datos a un archivo JSON",
+                "success": "¡Base de datos exportada exitosamente!",
+                "totalRecords": "Total de registros",
+                "savedTo": "También guardado en: `{path}`",
+                "failed": "Error al exportar la base de datos: {error}"
+            },
+            "dbImport": {
+                "description": "Importar la base de datos desde un archivo JSON",
+                "usage": "{prefix}db-import [adjunto | url | nombre de archivo]",
+                "slashFileDescription": "El archivo JSON a importar",
+                "slashUrlDescription": "URL del archivo JSON (o nombre de archivo en la carpeta de datos)",
+                "provideJson": "Por favor proporciona un archivo JSON.",
+                "provideJsonHint": "Por favor proporciona un archivo JSON mediante adjunto, URL o nombre de archivo en la carpeta de datos.",
+                "invalidFormat": "Formato de exportación de base de datos inválido.",
+                "success": "¡Base de datos importada exitosamente!",
+                "totalRecords": "Total de registros",
+                "exportDate": "Fecha de exportación",
+                "version": "Versión",
+                "failed": "Error al importar la base de datos: {error}"
+            },
+            "setup": {
+                "description": "Configurar ajustes del bot (solo desarrolladores)",
+                "usage": "{prefix}setup <ajuste> [valor]",
+                "unknownSetting": "Ajuste desconocido. Usa {command} para ver los ajustes disponibles.",
+                "embedTitle": "Ajustes del Bot",
+                "embedColor": {
+                    "set": "El color del embed se ha establecido a {color}",
+                    "reset": "El color del embed se ha restablecido al valor predeterminado.",
+                    "invalid": "Código de color hexadecimal inválido. Usa un código hexadecimal de 6 caracteres (ej: `#FF5733` o `FF5733`)."
+                },
+                "yesEmoji": {
+                    "set": "El emoji de éxito se ha establecido a {emoji}",
+                    "reset": "El emoji de éxito se ha restablecido al valor predeterminado."
+                },
+                "noEmoji": {
+                    "set": "El emoji de error se ha establecido a {emoji}",
+                    "reset": "El emoji de error se ha restablecido al valor predeterminado."
+                },
+                "altPrefix": {
+                    "set": "Los prefijos alternativos se han establecido a: {prefixes}",
+                    "reset": "Los prefijos alternativos se han restablecido al valor predeterminado.",
+                    "invalid": "Por favor proporciona al menos un prefijo."
+                },
+                "splash": {
+                    "set": "La imagen de bienvenida del canal de peticiones se ha establecido.",
+                    "reset": "La imagen de bienvenida del canal de peticiones se ha restablecido al valor predeterminado.",
+                    "invalid": "Por favor proporciona una URL válida."
+                },
+                "defaultVolume": {
+                    "set": "El volumen predeterminado se ha establecido a {volume}",
+                    "reset": "El volumen predeterminado se ha restablecido.",
+                    "invalid": "El volumen debe ser un número entre `1` y `200`"
+                },
+                "selectionType": {
+                    "set": "El tipo de selección musical se ha establecido a {type}",
+                    "reset": "El tipo de selección musical se ha restablecido al valor predeterminado.",
+                    "invalid": "El tipo de selección debe ser `message` o `selectmenu`"
+                },
+                "audioCache": {
+                    "set": "La caché de audio ha sido {state}",
+                    "enabled": "activada",
+                    "disabled": "desactivada"
+                },
+                "searchProvider": {
+                    "set": "El proveedor de búsqueda se ha establecido a {provider}",
+                    "reset": "El proveedor de búsqueda se ha restablecido al valor predeterminado (`DSP`).",
+                    "invalid": "El proveedor de búsqueda debe ser `dsp` o `direct`"
+                },
+                "resetAll": "Todos los ajustes del bot se han restablecido a los valores predeterminados.",
+                "alwaysOn": {
+                    "set": "El modo Siempre Encendido (24/7) ha sido {state}",
+                    "enabled": "habilitado",
+                    "disabled": "deshabilitado"
+                }
+            }
+        },
+        "general": {
+            "about": {
+                "aboutFooter": "Información del bot {botname}",
+                "botUptimeString": "Tiempo de actividad del bot",
+                "botVersionString": "Versión del bot",
+                "cachedUsersString": "Usuarios en caché",
+                "channelsString": "Canales",
+                "commitString": "Commit",
+                "description": "Muestra la información del bot",
+                "discordJSVersionString": "Versión de Discord.js",
+                "ffmpegVersionString": "Versión de FFmpeg",
+                "nodeVersionString": "Versión de Node.js",
+                "osUptimeString": "Tiempo de actividad del S.O.",
+                "processUptimeString": "Tiempo de actividad del proceso",
+                "serversString": "Servidores",
+                "sourceCodeString": "Código Fuente"
+            },
+            "help": {
+                "aliasesString": "Alias",
+                "authorString": "Lista de comandos de {username}",
+                "commandDetailTitle": "{username} - Información del comando {command}",
+                "commandSelectionString": "Por favor selecciona un comando",
+                "commandUsageFooter": "<> = requerido | [] = opcional {devOnly}",
+                "description": "Muestra la lista de comandos o la información de un comando específico",
+                "descriptionString": "Descripción",
+                "disabledSelection": "Nada que seleccionar aquí",
+                "footerString": "{prefix}help <comando> para obtener más información de un comando específico",
+                "nameString": "Nombre",
+                "noAliases": "Ninguno.",
+                "noCommandSuggest": "No se puede encontrar el comando. Quisiste decir este?",
+                "noCommand": "No se puede encontrar el comando.",
+                "slashDescription": "Nombre del comando para ver información específica acerca de dicho comando",
+                "usage": "{prefix}help [comando]",
+                "usageString": "Uso"
+            },
+            "invite": {
+                "clickURL": "- **[Haz clic aquí]({url})** para invitar al bot{botNum} a su servidor.",
+                "description": "Obtén el enlace de invitación para el bot",
+                "inviteTitle": "{bot} - Enlace De Invitación"
+            },
+            "ping": {
+                "description": "Muestra el ping actual del bot",
+                "footerString": "Latencia de: {user}"
+            },
+            "language": {
+                "description": "Cambia el idioma del bot para este servidor",
+                "noPermission": "Necesitas el permiso **Gestionar Servidor** para usar este comando.",
+                "slashSetDescription": "Establecer el idioma del servidor",
+                "slashViewDescription": "Ver el idioma actual del servidor",
+                "slashResetDescription": "Restablecer al idioma predeterminado",
+                "slashLocaleOption": "El idioma a establecer",
+                "usage": "{prefix}language <view | set | reset> [idioma]",
+                "embedTitle": "Configuración de idioma",
+                "currentLanguage": "Idioma actual:",
+                "languageSet": "El idioma del servidor se ha cambiado a",
+                "languageReset": "El idioma del servidor ha sido restablecido a:",
+                "invalidLocale": "Idioma no válido. Idiomas disponibles:",
+                "availableLocales": "Idiomas disponibles"
+            },
+            "prefix": {
+                "currentPrefix": "Prefijo actual: {prefix}",
+                "description": "Cambiar el prefijo de comandos para este servidor",
+                "embedTitle": "Configuración de prefijo",
+                "noPermission": "Necesitas el permiso **Gestionar Servidor** para usar este comando.",
+                "prefixReset": "El prefijo se ha restablecido a: {prefix}",
+                "prefixSet": "El prefijo se ha establecido en: {prefix}",
+                "prefixTooLong": "El prefijo no puede tener más de `10` caracteres.",
+                "slashPrefixOption": "El nuevo prefijo (máx. `10` caracteres)",
+                "slashResetDescription": "Restablecer al prefijo predeterminado",
+                "slashSetDescription": "Establecer un prefijo personalizado para este servidor",
+                "slashViewDescription": "Ver el prefijo actual",
+                "usage": "{prefix}prefix [nuevo prefijo | view | reset]"
+            }
+        },
+        "music": {
+            "dj": {
+                "description": "Cambia la configuración del DJ",
+                "usage": "{prefix}dj <enable | disable | role> [rol]",
+                "disable": "Desactivado",
+                "disableText": "La función DJ ha sido **`Desactivada`**",
+                "embedTitle": "DJ",
+                "enable": "Activado",
+                "enableText": "La función DJ ha sido **`Activada`**",
+                "newRoleText": "Nuevo rol",
+                "noPermission": "Necesitas el permiso **Gestionar Servidor** para usar este comando.",
+                "role": {
+                    "current": "<@&{role}> es el rol DJ actualmente.",
+                    "invalid": "Rol no válido.",
+                    "noRole": "No hay rol DJ establecido actualmente, por favor usa {djRoleCmd} para establecerlo.",
+                    "success": "<@&{role}> ha sido establecido como rol DJ."
+                },
+                "slashDisableDescription": "Desactiva la función DJ",
+                "slashEnableDescription": "Activa la función DJ",
+                "slashRoleDescription": "Mira o cambia la configuración del rol DJ",
+                "slashRoleNewRoleOption": "Nuevo rol DJ"
+            },
+            "filter": {
+                "availableFilters": "Filtros disponibles",
+                "currentlyUsedFilters": "Filtros utilizados actualmente",
+                "currentState": "{filter} es actualmente {state}",
+                "description": "Configurar el filtro de canción",
+                "usage": "{prefix}filter <enable | disable | status> [filtro]",
+                "embedFooter": "Para {opstate} el filtro, utilice {prefix}filter {opstate} {filter}",
+                "filterSet": "El filtro {filter} ya está {state}",
+                "filterRestartedFooter": "La canción se reinició desde el principio (el audio aún se estaba cargando).",
+                "filterNoQueueFooter": "El filtro se aplicará cuando empieces a reproducir música.",
+                "slashStateDescription": "{state, select, enable {Activar} other {Desactivar}} un filtro de canción",
+                "slashStateFilterDescription": "El filtro de canción que será {state, select, enable {activado} other {desactivado}}",
+                "slashStatusDescription": "Comprobar el estado actual de los filtros de canción",
+                "slashStatusFilterDescription": "El filtro de canción que desea comprobar",
+                "specifyFilter": "Por favor, especifique el filtro de canción."
+            },
+            "lyrics": {
+                "description": "Muestra la letra de una canción",
+                "noLyrics": "No se encontraron letras para {song}.",
+                "noQuery": "No se está reproduciendo nada o no se ingresaró ninguna canción a buscar.",
+                "searchingLyrics": "Buscando letra...",
+                "slashDescription": "Canción a buscar",
+                "usage": "{prefix}lyrics [canción]"
+            },
+            "nowplaying": {
+                "description": "Muestra el estado de reproducción",
+                "disableButton": "Este botón ya no está activo y ha sido eliminado.",
+                "pauseResumeButton": "Pausar/Reanudar",
+                "skipButton": "Saltar",
+                "stopButton": "Detener",
+                "showQueueButton": "Ver Cola",
+                "emptyQueue": "La cola está vacía.",
+                "error": "Error al obtener la pista en reproducción: {message}",
+                "live": "EN VIVO",
+                "requestedBy": "Solicitado por",
+                "unknownDuration": "Duración desconocida"
+            },
+            "pause": {
+                "alreadyPause": "La reproducción ya está en pausa.",
+                "description": "Pausa la reproducción",
+                "pauseMessage": "Reproducción pausada."
+            },
+            "play": {
+                "alreadyPlaying": "La reproducción ya está activa en el canal de voz {voiceChannel}",
+                "description": "Reproduce algo de música",
+                "noSongData": "Este URL no tiene datos de canciones.",
+                "slashQueryDescription": "Canción a reproducir",
+                "usage": "{prefix}play <consulta / url>"
+            },
+            "queue": {
+                "description": "Muestra la cola de reproducción"
+            },
+            "remove": {
+                "description": "Quita canciones de la cola",
+                "noPermission": "No tienes permiso para usar este comando.",
+                "noPositions": "Por favor, especifica una posición válida.",
+                "slashPositionsDescription": "Posición de la cancion(es) a quitar, separadas por comas o espacios",
+                "songSkip": "La canción actual ha sido saltada.\n\n",
+                "songsRemoved": "Se eliminaron {removed} canción(es) de la cola.",
+                "usage": "{prefix}remove <posiciones>"
+            },
+            "repeat": {
+                "actualMode": "El modo de repetición actual es {mode}",
+                "description": "Repite la canción actual o la cola completa",
+                "footer": "Para cambiar el modo, revisa {prefix}help repeat",
+                "newMode": "El modo de reproducción ha sido establecido a {mode}",
+                "slashDisable": "Desactiva el modo repetición",
+                "slashQueue": "Establece el mode repetición a **`Cola`**",
+                "slashSong": "Establece el mode repetición a **`Una`**",
+                "usage": "{prefix}repeat <{options}>"
+            },
+            "resume": {
+                "alreadyResume": "La reproducción no está en pausa.",
+                "description": "Reanuda la reproducción",
+                "resumeMessage": "Reproducción reanudada."
+            },
+            "search": {
+                "cancelMessage": "Escribe {cancel} o c para cancelar la selección de música.",
+                "canceledMessage": "Selección de canciones cancelada.",
+                "description": "Reproduce alguna canción usando una fuente específica",
+                "disabledSelection": "Nada que seleccionar aquí",
+                "interactionContent": "Por favor selecciona una canción",
+                "interactionPlaceholder": "Por favor selecciona una canción",
+                "noQuery": "Por favor ingresa alguna canción para buscar.",
+                "noSelection": "No se ingresó un valor o este fue inválido, búsqueda de canciones cancelada.",
+                "noTracks": "No se pudieron obtener resultados.",
+                "queueEmbed": "Por favor selecciona la canción, puedes seleccionar más de una usando un espacio en blanco o {separator}.\n",
+                "slashQueryDescription": "Canción a buscar",
+                "slashSourceDescription": "¿De dónde debería tomar la canción?",
+                "trackSelectionMessage": "Selección de canciones",
+                "usage": "{prefix}search <canción> [fuente]"
+            },
+            "shuffle": {
+                "actualState": "El modo aleatorio está {state}",
+                "description": "Aleatoriza la cola",
+                "newState": "El modo aleatorio se estableció ahora a {state}"
+            },
+            "autoplay": {
+                "actualState": "La reproducción automática está actualmente {state}",
+                "description": "Alternar modo de reproducción automática",
+                "newState": "La reproducción automática ahora es {state}"
+            },
+            "seek": {
+                "cantSeekLive": "No se puede buscar en transmisiones en vivo.",
+                "cantSeekSoundcloud": "No se puede buscar en pistas de SoundCloud.",
+                "description": "Saltar a un tiempo específico en la canción actual",
+                "exceedsDuration": "El tiempo de búsqueda excede la duración de la canción ({duration}).",
+                "invalidTime": "Formato de tiempo inválido: {time}. Use formatos como `1:30` o `90`",
+                "noPlaying": "No hay ninguna canción reproduciéndose actualmente.",
+                "noTime": "Por favor, especifica un tiempo al cual saltar.",
+                "notCached": "Aún no se puede buscar en esta canción. Por favor espera a que el audio se almacene.",
+                "seeked": "Saltado a {time}",
+                "slashTimeDescription": "Tiempo al cual saltar (ej., `1:30` o `90`)",
+                "usage": "{prefix}seek <tiempo>",
+                "waitingForCache": "Por favor espera, el audio aún se está almacenando..."
+            },
+            "skip": {
+                "description": "Salta la canción actual",
+                "skipMessage": "Se ha saltado {song}",
+                "voteResultMessage": "{length}/{required} han votado para saltar la canción."
+            },
+            "skipTo": {
+                "cantPlay": "No puedes saltar la canción actual.",
+                "description": "Salta a una posición específica de la cola",
+                "invalidPosition": "Por favor, proporciona un número de posición válido.",
+                "noPermission": "No tienes permiso para usar este comando.",
+                "noSongPosition": "No se pudo encontrar la canción en esta posición.",
+                "skipMessage": "Se ha saltado a {song}",
+                "slashFirstDescription": "Regresa a la primera canción de la cola",
+                "slashLastDescription": "Salta a la última canción de la cola",
+                "slashPositionDescription": "Posición de la canción en la cola",
+                "slashSpecificDescription": "Salta a una posición específica en la cola",
+                "usage": "{prefix}skipto <{options} | número>"
+            },
+            "stop": {
+                "description": "Detiene la reproducción",
+                "stoppedMessage": "Reproducción detenida."
+            },
+            "volume": {
+                "changeVolume": "Para cambiar el volúmen, ingresa un número usando este comando.",
+                "currentVolume": "El volúmen actual es {volume}",
+                "description": "Cambia el volumen de reproducción",
+                "newVolume": "Volúmen establecido en {volume}",
+                "noPermission": "Necesitas el rol DJ o el permiso **Gestionar Servidor** para establecer el volúmen por encima de `100%`",
+                "plsPause": "Pausa la reproducción en lugar de establecer el volumen en {volume}",
+                "slashDescription": "Nuevo volúmen",
+                "usage": "{prefix}volume [volumen]"
+            },
+            "requestChannel": {
+                "description": "Configurar un canal de solicitudes para música",
+                "noPermission": "Necesitas el permiso **Gestionar Servidor** para usar este comando.",
+                "invalidChannel": "Por favor proporciona un canal de texto válido.",
+                "noBotPermissions": "No se pudieron verificar los permisos para ese canal.",
+                "missingBotPermissions": "Faltan los siguientes permisos en ese canal: {permissions}",
+                "failedToSetup": "No se pudo configurar el canal de solicitudes. Verifica los permisos del canal.",
+                "alreadyHasChannel": "Este servidor ya tiene un canal de solicitudes configurado en {channel}. Por favor elimínalo primero antes de configurar uno nuevo.",
+                "channelAlreadyInUse": "Este canal ya está siendo utilizado como canal de solicitudes.",
+                "noChannelToRemove": "No hay ningún canal de solicitudes configurado para eliminar.",
+                "slashSetDescription": "Establecer un canal como canal de solicitudes",
+                "slashRemoveDescription": "Eliminar el canal de solicitudes",
+                "slashStatusDescription": "Mostrar el canal de solicitudes actual",
+                "slashChannelDescription": "El canal a establecer como canal de solicitudes",
+                "usage": "{prefix}requestchannel <set | remove | status> [channel]"
+            }
+        }
+    },
+    "events": {
+        "channelUpdate": {
+            "connectionReconfigured": "La conexión se ha reconfigurado con éxito.",
+            "reconfigureConnection": "Se ha cambiado la región del canal de voz, reconfigurando conexión...",
+            "unableReconfigureConnection": "No se pudo reconfigurar la conexión, la cola ha sido eliminada."
+        },
+        "createInteraction": {
+            "message1": "Lo siento, pero esta interacción es solo para <@{user}> y el staff del servidor.",
+            "devOnly": "Comando solo para desarrolladores.",
+            "lyricsCommandNotFound": "Comando de letras no encontrado.",
+            "wrongBot": "Este comando debe ejecutarse en {botMention} como el bot principal de este servidor.",
+            "primaryBotFallback": "el bot principal"
+        },
+        "createMessage": "Hola {author}, prefijo: {prefix}",
+        "cmdLoading": "Cargando...",
+        "voiceStateUpdate": {
+            "connectionReconfigured": "La conexión se ha reconfigurado con éxito.",
+            "deleteQueue": "Ha pasado {duration} y nadie se ha unido al canal de voz, la cola ha sido eliminada.",
+            "deleteQueueFooter": "Cola eliminada",
+            "disconnectFromVCMessage": "Desconectado del canal de voz, la cola ha sido eliminada.",
+            "joinStageMessage": "Me uní al canal escenario con éxito como orador.",
+            "joiningAsSpeaker": "Movido a un canal de escenario, intentando unirse como Orador...",
+            "pauseQueue": "Todos han dejado el canal de voz. Para ahorrar recursos, se ha pausado la cola.\nSi nadie se une al canal de voz en {duration}, la cola se eliminará.",
+            "pauseQueueFooter": "Cola pausada",
+            "pauseRequesterDeaf": "{requester} está ensordecido, pausando {song}. Si no deja de estar ensordecido en {duration}, sus canciones se eliminarán de la cola.",
+            "pauseRequesterLeft": "{requester} salió del canal de voz, pausando {song}. Si no vuelve en {duration}, sus canciones se eliminarán de la cola.",
+            "removeRequesterDeaf": "{requester} no dejó de estar ensordecido en {duration}, se eliminaron {count} canción(es) de la cola.",
+            "removeRequesterLeft": "{requester} no volvió en {duration}, se eliminaron {count} canción(es) de la cola.",
+            "resumeRequesterDeaf": "El solicitante dejó de estar ensordecido.\nReanudando {song}",
+            "resumeRequesterLeft": "El solicitante volvió al canal de voz.\nReanudando {song}",
+            "reconfigureConnection": "He sido movido a un canal de voz en una región diferente, reconfigurando conexión...",
+            "resumeQueue": "Alguien se ha unido al canal de voz.\nReanudando {song}",
+            "resumeQueueFooter": "Cola reanudada",
+            "unableJoinStageMessage": "No se pudo unir como orador, la cola ha sido eliminada.",
+            "unableReconfigureConnection": "No se pudo reconfigurar la conexión, la cola ha sido eliminada."
+        }
+    },
+    "requestChannel": {
+        "title": "Reproductor de Música",
+        "standby": "No hay música reproduciéndose. ¡Envía un nombre de canción o URL para empezar!",
+        "status": "Bucle",
+        "shuffle": "Aleatorio",
+        "autoplay": "Reproducción-automática",
+        "volume": "Volumen",
+        "queueFooter": "Canciones restantes en la cola: {count} ({duration} de duración)",
+        "live": "EN VIVO",
+        "songDuration": "Duración",
+        "requestedBy": "Solicitado por",
+        "unknown": "Desconocido",
+        "notInVoice": "Necesitas estar en un canal de voz para solicitar música.",
+        "deafened": "Necesitas dejar de estar ensordecido antes de solicitar música.",
+        "requesterDeafPaused": "El solicitante está ensordecido. La reproducción se reanudará cuando deje de estarlo.",
+        "requesterLeftPaused": "El solicitante salió del canal de voz. La reproducción se reanudará cuando vuelva.",
+        "noResults": "No se encontraron resultados para tu búsqueda.",
+        "addedToQueue": "Se añadió {song} a la cola.",
+        "resolvingPlaylist": "Resolviendo la lista de reproducción, espera…",
+        "addingPlaylistToQueue": "Añadiendo a la cola: {current}/{total}…",
+        "addedPlaylistToQueue": "Se añadieron {count} canciones de {playlist} a la cola.",
+        "queueListTitle": "Lista de Cola",
+        "emptyQueue": "La cola está vacía.",
+        "nothingPlaying": "No se está reproduciendo nada actualmente.",
+        "setChannel": "El canal de solicitudes se ha establecido en {channel}",
+        "removeChannel": "El canal de solicitudes ha sido eliminado.",
+        "noChannel": "No hay canal de solicitudes establecido actualmente.",
+        "currentChannel": "Canal de solicitudes actual: {channel}",
+        "skipInProgress": "Por favor espera, una operación de salto está en progreso.",
+        "noPermission": "No tienes permiso para realizar esta acción. Solo el rol DJ, administradores del servidor o quien solicitó la canción pueden hacerlo.",
+        "addedPlaylistSkipped": "Se omitieron {count} elemento(s): {reason}.",
+        "skippedReasonUnavailable": "privado/eliminado o no disponible",
+        "skippedReasonUnresolved": "no se pudo vincular con una canción reproducible",
+        "skippedReasonSkipped": "duplicado, privado/eliminado o no disponible",
+        "resolvingSong": "Resolviendo la canción, espera…"
+    },
+    "reusable": {
+        "invalidUsage": "Uso inválido, por favor usa {prefix} {name} para más información.",
+        "pageFooter": "Página {actual} de {total}",
+        "lyricsSource": "Fuente: {source}",
+        "enabled": "Activado",
+        "disabled": "Desactivado"
+    },
+    "utils": {
+        "commonUtil": {
+            "botMissingChannelPerms": "Faltan los siguientes permisos en {channel}: {permissions}"
+        },
+        "cooldownMessage": "{author}, por favor espera {timeleft} para poder hacer eso.",
+        "generalHandler": {
+            "errorJoining": "Error al unirse al canal de voz, razón: {message}",
+            "errorPlaying": "Ocurrió un error al tratar de reproducir música, razón: {message}",
+            "handleVideoInitial": "Se han añadido {length} canciones a la cola.",
+            "leftVC": "Canal de voz abandonado por inactividad prolongada.",
+            "queueEnded": "La cola ha terminado, usa {usage} para reproducir más música.",
+            "startPlaying": "Se empezó a reproducir {song}",
+            "stopPlaying": "Se detuvo la reproducción {song}",
+            "songRequeued": "Hubo un problema al reproducir {song}, se ha vuelto a agregar a la cola para otro intento.",
+            "allCookiesFailed": "Todas las cookies han fallado debido a detección de bot. Usa {logoutCmd} y luego {startCmd} para volver a iniciar sesión.",
+            "ageRestricted": "No se puede reproducir {song} porque tiene restricción de edad y requiere inicio de sesión."
+        },
+        "musicDecorator": {
+            "noInVC": "Lo siento, pero debes estar en un canal de voz para hacer eso.",
+            "noQueue": "No se está reproduciendo nada.",
+            "notPlaying": "No hay música reproduciéndose actualmente. Por favor, reproduce una canción primero.",
+            "sameVC": "Necesitas estar en el mismo canal de voz.",
+            "useRequestChannel": "Por favor usa el canal de solicitudes {channel} para comandos de música.",
+            "useRequestChannelDirect": "Este comando está deshabilitado en el canal de solicitudes. Usa los controles o escribe el título/enlace de la canción directamente.",
+            "validVCJoinable": "No se puede **`Conectar`** a tu canal de voz. Verifica que los permisos sean correctos.",
+            "validVCPermission": "No se puede **`Hablar`** en este canal de voz. Verifica que los permisos sean correctos."
+        }
+    }
+}

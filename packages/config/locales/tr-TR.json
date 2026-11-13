@@ -1,0 +1,504 @@
+{
+    "commands": {
+        "developers": {
+            "eval": {
+                "description": "JavaScript kodu yürüt",
+                "errorString": "Hata",
+                "noCode": "Herhangi bir kod girişi sağlanmadı.",
+                "inputString": "Giriş",
+                "outputString": "Çıkış",
+                "usage": "{prefix}eval <kod>"
+            },
+            "login": {
+                "description": "YouTube çerez kimlik doğrulaması için Google giriş oturumunu yönet",
+                "usage": "{prefix}login <start | status | logout>",
+                "slashStartDescription": "Tarayıcı üzerinden Google giriş oturumu başlat",
+                "slashStatusDescription": "Mevcut giriş oturumu durumunu kontrol et",
+                "slashLogoutDescription": "Tarayıcı oturumunu kapat",
+                "invalidSubcommand": "Kullanım: {loginUsage}",
+                "alreadyLoggedIn": "Zaten giriş yapılmış. Yeni bir oturum başlatmak için önce {logoutCmd} kullanın.",
+                "launching": "Google girişi için tarayıcı başlatılıyor...",
+                "sessionTitle": "Google Giriş Oturumu",
+                "sessionDescription": "Bir tarayıcı penceresi açıldı. Google hesabınızla orada giriş yapın.",
+                "step1WithUrl": "1. Sunucuda yeni beliren tarayıcı penceresini bulun",
+                "step1Fallback": "1. Sunucuda yeni beliren tarayıcı penceresini bulun",
+                "step2WithUrl": "2. Google hesabınızla giriş yapın",
+                "step2Fallback": "2. Uzaktaysa, `chrome://inspect` üzerinden DevTools açın ve {target} ekleyin",
+                "step3": "3. Girişin tamamlandığı otomatik olarak algılanacak",
+                "step4": "4. Uzak DevTools URL: {url} (isteğe bağlı)",
+                "timeLimit": "Girişi tamamlamak için {minutes} dakikanız var.",
+                "loginSuccess": "Giriş Başarılı",
+                "loginSuccessDescription": "Başarıyla giriş yapıldı{email}.\n\nÇerezler dışa aktarıldı ve kaydedildi.\nYouTube artık bot algılama sorunları olmadan çalışmalıdır.",
+                "loginSuccessEmail": " {email} olarak",
+                "loginFailed": "Giriş Başarısız",
+                "loginFailedDescription": "Giriş zaman aşımına uğradı veya iptal edildi.\n\nTekrar denemek için {cmd} kullanın.",
+                "loginError": "Giriş Hatası",
+                "loginErrorDescription": "Giriş sırasında bir hata oluştu:\n{error}",
+                "statusTitle": "Giriş & Çerez Durumu",
+                "logoutSuccess": "Giriş oturumu temizlendi.\n\nTüm çerezler ve profil verileri silindi.\nYeni bir oturum başlatmak için {cmd} kullanın.",
+                "logoutNoBrowser": "Aktif giriş oturumu yok.",
+                "cookieFileField": "Çerez Dosyası",
+                "statusActive": "Aktif",
+                "statusMissing": "Çerez mevcut değil",
+                "sizeLabel": "Boyut",
+                "lastRefreshLabel": "Son Yenileme",
+                "lastRefreshNever": "Hiç",
+                "googleLoginField": "Google Girişi",
+                "sessionLoggedIn": "Giriş yapıldı",
+                "sessionWaiting": "Giriş bekleniyor...",
+                "sessionError": "Hata: {error}",
+                "sessionIdle": "Başlatılmadı",
+                "accountLabel": "Hesap",
+                "accountNA": "`N/A`",
+                "gettingStartedField": "Başlangıç",
+                "gettingStartedText": "Google'a giriş yapmak ve çerezleri otomatik oluşturmak için {loginCmd} kullanın.",
+                "statsTitle": "İstatistikler"
+            },
+            "dbExport": {
+                "description": "Tüm veritabanını bir JSON dosyasına aktar",
+                "success": "Veritabanı başarıyla dışa aktarıldı!",
+                "totalRecords": "Toplam Kayıt",
+                "savedTo": "Ayrıca şuraya kaydedildi: `{path}`",
+                "failed": "Veritabanı dışa aktarılamadı: {error}"
+            },
+            "dbImport": {
+                "description": "Bir JSON dosyasından veritabanını içe aktar",
+                "usage": "{prefix}db-import [ek dosya | url | dosya adı]",
+                "slashFileDescription": "İçe aktarılacak JSON dosyası",
+                "slashUrlDescription": "JSON dosyasının URL'si (veya data klasöründeki dosya adı)",
+                "provideJson": "Lütfen bir JSON dosyası sağlayın.",
+                "provideJsonHint": "Lütfen ek dosya, URL veya data klasöründeki dosya adı ile bir JSON dosyası sağlayın.",
+                "invalidFormat": "Geçersiz veritabanı dışa aktarma biçimi.",
+                "success": "Veritabanı başarıyla içe aktarıldı!",
+                "totalRecords": "Toplam Kayıt",
+                "exportDate": "Dışa Aktarma Tarihi",
+                "version": "Sürüm",
+                "failed": "Veritabanı içe aktarılamadı: {error}"
+            },
+            "setup": {
+                "description": "Bot ayarlarını yapılandır (yalnızca geliştiriciler)",
+                "usage": "{prefix}setup <ayar> [değer]",
+                "unknownSetting": "Bilinmeyen ayar. Mevcut ayarları görmek için {command} kullanın.",
+                "embedTitle": "Bot Ayarları",
+                "embedColor": {
+                    "set": "Embed rengi {color} olarak ayarlandı.",
+                    "reset": "Embed rengi varsayılana sıfırlandı.",
+                    "invalid": "Geçersiz hex renk kodu. 6 karakterlik bir hex kodu kullanın (ör: `#FF5733` veya `FF5733`)."
+                },
+                "yesEmoji": {
+                    "set": "Başarı emojisi {emoji} olarak ayarlandı.",
+                    "reset": "Başarı emojisi varsayılana sıfırlandı."
+                },
+                "noEmoji": {
+                    "set": "Hata emojisi {emoji} olarak ayarlandı.",
+                    "reset": "Hata emojisi varsayılana sıfırlandı."
+                },
+                "altPrefix": {
+                    "set": "Alternatif ön ekler şu şekilde ayarlandı: {prefixes}",
+                    "reset": "Alternatif ön ekler varsayılana sıfırlandı.",
+                    "invalid": "Lütfen en az bir ön ek girin."
+                },
+                "splash": {
+                    "set": "İstek kanalı açılış görseli ayarlandı.",
+                    "reset": "İstek kanalı açılış görseli varsayılana sıfırlandı.",
+                    "invalid": "Lütfen geçerli bir URL girin."
+                },
+                "defaultVolume": {
+                    "set": "Varsayılan ses seviyesi {volume} olarak ayarlandı.",
+                    "reset": "Varsayılan ses seviyesi sıfırlandı.",
+                    "invalid": "Ses seviyesi `1` ile `200` arasında bir sayı olmalıdır."
+                },
+                "selectionType": {
+                    "set": "Müzik seçim türü {type} olarak ayarlandı.",
+                    "reset": "Müzik seçim türü varsayılana sıfırlandı.",
+                    "invalid": "Seçim türü `message` veya `selectmenu` olmalıdır."
+                },
+                "audioCache": {
+                    "set": "Ses önbelleği {state}",
+                    "enabled": "etkinleştirildi",
+                    "disabled": "devre dışı bırakıldı"
+                },
+                "searchProvider": {
+                    "set": "Arama sağlayıcısı {provider} olarak ayarlandı",
+                    "reset": "Arama sağlayıcısı varsayılana (`DSP`) sıfırlandı.",
+                    "invalid": "Arama sağlayıcısı `dsp` veya `direct` olmalıdır"
+                },
+                "resetAll": "Tüm bot ayarları varsayılanlara sıfırlandı.",
+                "alwaysOn": {
+                    "set": "Her Zaman Açık (24/7) modu {state}",
+                    "enabled": "etkinleştirildi",
+                    "disabled": "devre dışı bırakıldı"
+                }
+            }
+        },
+        "general": {
+            "about": {
+                "aboutFooter": "{botname} - Bot Bilgileri",
+                "botUptimeString": "Bot Çalışma Süresi",
+                "botVersionString": "Bot sürümü",
+                "cachedUsersString": "Önbelleğe Alınmış Kullanıcılar",
+                "channelsString": "Kanallar",
+                "commitString": "işle",
+                "description": "Bot bilgilerini görüntüle",
+                "discordJSVersionString": "Discord.js sürümü",
+                "ffmpegVersionString": "FFmpeg sürümü",
+                "nodeVersionString": "Node.js sürümü",
+                "osUptimeString": "OS Çalışma Süresi",
+                "processUptimeString": "Servis Çalışma Süresi",
+                "serversString": "Sunucular",
+                "sourceCodeString": "Kaynak Kodu"
+            },
+            "help": {
+                "aliasesString": "Diğer Kullanımlar",
+                "authorString": "{username} - Komut Listesi",
+                "commandDetailTitle": "{username} - {command} komutu hakkında bilgi",
+                "commandSelectionString": "Lütfen bir komut seçin",
+                "commandUsageFooter": "<> = zorunlu | [] = isteğe bağlı {devOnly}",
+                "description": "Komut listesini veya belirli bir komut için bilgi gösterir",
+                "descriptionString": "Açıklama",
+                "disabledSelection": "Burada seçilecek bir şey yok",
+                "footerString": "Belirli bir komut hakkında daha fazla bilgi almak için: {prefix}help <komut adı>",
+                "nameString": "Adı",
+                "noAliases": "Yok.",
+                "noCommandSuggest": "Eşleşen komut adı bulunamadı. Bunu mu demek istediniz?",
+                "noCommand": "Eşleşen bir komut adı bulunamadı.",
+                "slashDescription": "Komut hakkında belirli bilgileri görüntülemek için komut ismi",
+                "usage": "{prefix}help [komut ismi]",
+                "usageString": "Kullanım"
+            },
+            "invite": {
+                "clickURL": "- **[Buraya tıklayın]({url})** {botNum} numaralı botu sunucuna eklemek için.",
+                "description": "Bot için davet bağlantısını edinin",
+                "inviteTitle": "{bot} - Davet Linki"
+            },
+            "ping": {
+                "description": "Botun mevcut gecikme süresini gösterir",
+                "footerString": "Gecikme Süresi: {user}"
+            },
+            "language": {
+                "description": "Bu sunucu için bot dilini değiştir",
+                "noPermission": "Bu komutu kullanmak için **Sunucuyu Yönet** iznine ihtiyacınız var.",
+                "slashSetDescription": "Sunucu dilini ayarla",
+                "slashViewDescription": "Mevcut sunucu dilini görüntüle",
+                "slashResetDescription": "Varsayılan dile sıfırla",
+                "slashLocaleOption": "Ayarlanacak dil",
+                "usage": "{prefix}language <view | set | reset> [dil]",
+                "embedTitle": "Dil Ayarları",
+                "currentLanguage": "Mevcut dil:",
+                "languageSet": "Sunucu dili değiştirildi:",
+                "languageReset": "Sunucu dili varsayılana sıfırlandı:",
+                "invalidLocale": "Geçersiz dil. Kullanılabilir diller:",
+                "availableLocales": "Kullanılabilir diller"
+            },
+            "prefix": {
+                "currentPrefix": "Mevcut önek: {prefix}",
+                "description": "Bu sunucu için komut önekini değiştir",
+                "embedTitle": "Önek Ayarları",
+                "noPermission": "Bu komutu kullanmak için **Sunucu Yönet** iznine ihtiyacınız var.",
+                "prefixReset": "Önek sıfırlandı: {prefix}",
+                "prefixSet": "Önek ayarlandı: {prefix}",
+                "prefixTooLong": "Önek `10` karakterden uzun olamaz.",
+                "slashPrefixOption": "Yeni önek (maksimum `10` karakter)",
+                "slashResetDescription": "Varsayılan öneke sıfırla",
+                "slashSetDescription": "Bu sunucu için özel bir önek ayarla",
+                "slashViewDescription": "Mevcut öneki görüntüle",
+                "usage": "{prefix}prefix [yeni önek | view | reset]"
+            }
+        },
+        "music": {
+            "dj": {
+                "description": "DJ özelliği ayarlarını değiştir",
+                "usage": "{prefix}dj <enable | disable | role> [rol]",
+                "disable": "Devre dışı",
+                "disableText": "DJ özelliği **`Devre dışı bırakıldı`**",
+                "embedTitle": "DJ özelliği",
+                "enable": "Etkin",
+                "enableText": "DJ özelliği **`Etkin`**",
+                "newRoleText": "yeni rol",
+                "noPermission": "Bu komutu kullanmak için **Sunucuyu Yönet** iznine ihtiyacınız var.",
+                "role": {
+                    "current": "Mevcut DJ Rolü: <@&{role}>",
+                    "invalid": "Geçersiz rol.",
+                    "noRole": "DJ rolü ayarlanmamış, lütfen {djRoleCmd} ile ayarlayın",
+                    "success": "DJ rolü <@&{role}> olarak ayarlandı."
+                },
+                "slashDisableDescription": "DJ özelliğini devre dışı bırakır",
+                "slashEnableDescription": "DJ özelliğini etkinleştirir",
+                "slashRoleDescription": "DJ rolünü görüntüle veya değiştir",
+                "slashRoleNewRoleOption": "DJ için yeni rol"
+            },
+            "filter": {
+                "availableFilters": "Mevcut Filtreler",
+                "currentlyUsedFilters": "Şu Anda Kullanılan Filtreler",
+                "currentState": "{filter} şu anda {state}",
+                "description": "Şarkı filtresini yapılandır",
+                "usage": "{prefix}filter <enable | disable | status> [filtre]",
+                "embedFooter": "Filtreyi {opstate} yapmak için {prefix}filter {opstate} {filter} kullanın.",
+                "filterSet": "{filter} filtresi artık {state} oldu",
+                "filterRestartedFooter": "Şarkı baştan başlatıldı (ses hala yükleniyordu).",
+                "filterNoQueueFooter": "Müzik çalmaya başladığınızda filtre uygulanacak.",
+                "slashStateDescription": "Şarkı filtresi {state, select, enable {Enable} other {Disable}} olacaktır",
+                "slashStateFilterDescription": "Şarkı filtresi {state, select, enable {etkinleştirilecek} other {devre dışı bırakılacak}}",
+                "slashStatusDescription": "Şarkı filtrelerinin mevcut durumunu kontrol edin",
+                "slashStatusFilterDescription": "Kontrol etmek istediğiniz şarkı filtresi",
+                "specifyFilter": "Lütfen şarkı filtresini belirtin."
+            },
+            "lyrics": {
+                "description": "Şarkının sözlerini gösterir",
+                "noLyrics": "{song} için şarkı sözü bulunamadı.",
+                "noQuery": "Hiçbir şey çalmıyor veya hiçbir argüman sağlanmıyor.",
+                "searchingLyrics": "Şarkı sözleri aranıyor...",
+                "slashDescription": "Aranacak şarkı",
+                "usage": "{prefix}lyrics [şarkı]"
+            },
+            "nowplaying": {
+                "description": "Oynatma durumunu gösterir",
+                "disableButton": "Bu buton artık aktif değil ve kaldırıldı.",
+                "pauseResumeButton": "Duraklat/Devam",
+                "skipButton": "Atla",
+                "stopButton": "Durdur",
+                "showQueueButton": "Sırayı Göster",
+                "emptyQueue": "Kuyruk boş.",
+                "error": "Çalan parça bilgisi alınırken hata oluştu: {message}",
+                "live": "CANLI",
+                "requestedBy": "İsteyen",
+                "unknownDuration": "Bilinmeyen süre"
+            },
+            "pause": {
+                "alreadyPause": "Müzik zaten duraklatılmıştır.",
+                "description": "Müziği duraklatın",
+                "pauseMessage": "Müzik duraklatıldı."
+            },
+            "play": {
+                "alreadyPlaying": "Müzik zaten {voiceChannel} ses kanalında çalıyor.",
+                "description": "Biraz müzik çalın",
+                "noSongData": "Bu URL'de herhangi bir şarkı verisi yok.",
+                "slashQueryDescription": "Aranacak sorgu",
+                "usage": "{prefix}play <sorgu | url>"
+            },
+            "queue": {
+                "description": "Kuyruk listesini göster"
+            },
+            "remove": {
+                "description": "Şarkı(lar)ı kuyruktan kaldırır",
+                "noPermission": "Bu komutu kullanmak için izniniz yok.",
+                "noPositions": "Lütfen kaldırılacak şarkı pozisyonlarını belirtin.",
+                "slashPositionsDescription": "Virgül veya boşluk ile ayrılmış kaldırılacak şarkıların konumu",
+                "songSkip": "Geçerli şarkı kaldırıldı, şarkı atlandı.\n\n",
+                "songsRemoved": "Kuyruktan {removed} şarkı kaldırıldı.",
+                "usage": "{prefix}remove <pozisyon>"
+            },
+            "repeat": {
+                "actualMode": "Geçerli tekrar modu {mode}",
+                "description": "Mevcut müziği veya kuyruğu tekrarla",
+                "footer": "Modu değiştirmek için bkz. {prefix}help repeat",
+                "newMode": "Tekrar modu {mode} olarak ayarlanmıştır",
+                "slashDisable": "Tekrar modunu devre dışı bırak",
+                "slashQueue": "Tekrar modunu **`Şarkı kuyruğu`** olarak ayarlayın",
+                "slashSong": "Tekrar modunu **`Şarkı`** olarak ayarlayın",
+                "usage": "{prefix}repeat {options}"
+            },
+            "resume": {
+                "alreadyResume": "Oynatma duraklatılmamış.",
+                "description": "Oynatmayı devam ettirin",
+                "resumeMessage": "Oynatma devam ettirildi."
+            },
+            "search": {
+                "cancelMessage": "Müzik seçimini iptal etmek için {cancel} veya c yazın.",
+                "canceledMessage": "Müzik seçimi iptal edildi.",
+                "description": "Sağlanan sorguyu kullanarak biraz müzik çalın",
+                "disabledSelection": "Burada seçilecek bir şey yok",
+                "interactionContent": "Lütfen müzik seçin",
+                "interactionPlaceholder": "Lütfen müzik seçin",
+                "noQuery": "Lütfen aramak için bazı sorgular sağlayın.",
+                "noSelection": "Değer girilmedi veya geçersiz, müzik seçimi iptal edildi.",
+                "noTracks": "Herhangi bir arama sonucu elde edemiyorum.",
+                "queueEmbed": "Lütfen bir müzik seçin; boşluk veya {separator} kullanarak birden fazla müzik seçebilirsiniz.\n",
+                "slashQueryDescription": "Aranacak sorgu",
+                "slashSourceDescription": "Müzik nereye götürülmeli?",
+                "trackSelectionMessage": "Müzik Seçimi",
+                "usage": "{prefix}search <sorgu> [kaynak]"
+            },
+            "shuffle": {
+                "actualState": "Geçerli karıştırma modu {state}",
+                "description": "Karıştırma özelliği için modu ayarlama",
+                "newState": "Karıştırma modu şimdi {state} olarak ayarlandı"
+            },
+            "autoplay": {
+                "actualState": "Geçerli otomatik oynatma modu {state}",
+                "description": "Otomatik oynatma özelliği için modu ayarlama",
+                "newState": "Otomatik oynatma modu şimdi {state} olarak ayarlandı"
+            },
+            "seek": {
+                "cantSeekLive": "Canlı yayınlarda arama yapılamaz.",
+                "cantSeekSoundcloud": "SoundCloud parçalarında arama yapılamaz.",
+                "description": "Mevcut şarkıda belirli bir zamana atla",
+                "exceedsDuration": "Arama süresi şarkı süresini aşıyor ({duration}).",
+                "invalidTime": "Geçersiz zaman formatı: {time}. `1:30` veya `90` gibi formatlar kullanın.",
+                "noPlaying": "Şu anda çalan şarkı yok.",
+                "noTime": "Lütfen atlanacak bir zaman belirtin.",
+                "notCached": "Bu şarkıda henüz arama yapılamıyor. Lütfen ses tamponlanana kadar bekleyin.",
+                "seeked": "{time} konumuna atlandı",
+                "slashTimeDescription": "Atlanacak zaman (örn., `1:30` veya `90`)",
+                "usage": "{prefix}seek <zaman>",
+                "waitingForCache": "Lütfen bekleyin, ses hala tamponlanıyor..."
+            },
+            "skip": {
+                "description": "Müziği atlayın",
+                "skipMessage": "Atlanan {song}",
+                "voteResultMessage": "{length}/{required} kişi geçerli şarkıyı atlamak için oy kullandı."
+            },
+            "skipTo": {
+                "cantPlay": "Güncel müziğe atlayamazsınız.",
+                "description": "Kuyrukta belirli bir konuma atlama",
+                "invalidPosition": "Lütfen geçerli bir konum numarası girin.",
+                "noPermission": "Bu komutu kullanmak için izniniz yok.",
+                "noSongPosition": "Bu pozisyonda bir şarkı bulamadım.",
+                "skipMessage": "{song}'a atlandı",
+                "slashFirstDescription": "Kuyruktaki ilk şarkıya geri sar",
+                "slashLastDescription": "Kuyruktaki son şarkıya atla",
+                "slashPositionDescription": "Kuyruktaki şarkı konumu",
+                "slashSpecificDescription": "Kuyrukta belirli bir konuma atlama",
+                "usage": "{prefix}skipto {options}"
+            },
+            "stop": {
+                "description": "Oynatmayı durdurur",
+                "stoppedMessage": "Oynatma durduruldu."
+            },
+            "volume": {
+                "changeVolume": "Ses düzeyini değiştirmek için, bu komutu kullanırken ses düzeyini girin.",
+                "currentVolume": "Mevcut ses düzeyi {volume}",
+                "description": "Oynatma ses düzeyini değiştir",
+                "newVolume": "Ses seviyesi {volume} olarak ayarlandı",
+                "noPermission": "Ses seviyesini `100%`'in üzerine ayarlamak için DJ rolü veya **Sunucuyu Yönet** iznine ihtiyacınız var.",
+                "plsPause": "Lütfen ses seviyesini {volume} olarak ayarlamak yerine müziği duraklatın",
+                "slashDescription": "Yeni ses seviyesi",
+                "usage": "{prefix}volume [yeni değer]"
+            },
+            "requestChannel": {
+                "description": "Müzik için bir istek kanalı ayarla",
+                "noPermission": "Bu komutu kullanmak için **Sunucuyu Yönet** iznine ihtiyacınız var.",
+                "invalidChannel": "Lütfen geçerli bir metin kanalı belirtin.",
+                "noBotPermissions": "Bu kanal için izinlerimi kontrol edemedim.",
+                "missingBotPermissions": "Bu kanalda şu izinler eksik: {permissions}",
+                "failedToSetup": "İstek kanalı ayarlanamadı. Lütfen izinlerimi kontrol edin.",
+                "alreadyHasChannel": "Bu sunucuda zaten {channel} olarak ayarlanmış bir istek kanalı var. Yeni bir tane ayarlamadan önce lütfen onu kaldırın.",
+                "channelAlreadyInUse": "Bu kanal zaten istek kanalı olarak kullanılıyor.",
+                "noChannelToRemove": "Kaldırılacak ayarlanmış bir istek kanalı yok.",
+                "slashSetDescription": "Bir kanalı istek kanalı olarak ayarla",
+                "slashRemoveDescription": "İstek kanalını kaldır",
+                "slashStatusDescription": "Mevcut istek kanalını göster",
+                "slashChannelDescription": "İstek kanalı olarak ayarlanacak kanal",
+                "usage": "{prefix}requestchannel <set | remove | status> [channel]"
+            }
+        }
+    },
+    "events": {
+        "channelUpdate": {
+            "connectionReconfigured": "Bağlantı başarıyla yeniden yapılandırıldı.",
+            "reconfigureConnection": "Ses kanalı bölgesi değişti, bağlantı yeniden yapılandırılıyor...",
+            "unableReconfigureConnection": "Bağlantı yeniden yapılandırılamıyor, sıra silindi."
+        },
+        "createInteraction": {
+            "message1": "Üzgünüm, ancak bu etkileşim yalnızca <@{user}> ve sunucu moderatörleri için kullanılabilir.",
+            "devOnly": "Sadece geliştiricilere özel komut.",
+            "lyricsCommandNotFound": "Şarkı sözleri komutu bulunamadı.",
+            "wrongBot": "Bu komut, bu sunucunun ana botu olarak {botMention} üzerinde yürütülmelidir.",
+            "primaryBotFallback": "ana bot"
+        },
+        "createMessage": "Merhaba {author}, ön ek: {prefix}",
+        "cmdLoading": "Yükleniyor...",
+        "voiceStateUpdate": {
+            "connectionReconfigured": "Bağlantı başarıyla yeniden yapılandırıldı.",
+            "deleteQueue": "{duration} geçti ve ses kanalına katılan kimse yok, sıra silindi.",
+            "deleteQueueFooter": "Şarkı Sırası Silindi",
+            "disconnectFromVCMessage": "Ses kanalıyla bağlantı kesildi, sıra silindi.",
+            "joinStageMessage": "Konuşmacı olarak sahne kanalına başarıyla katıldım.",
+            "joiningAsSpeaker": "Sahne kanalına taşındı, Konuşmacı olarak katılmaya çalışıyorum...",
+            "pauseQueue": "Herkes ses kanalından ayrıldı. Kaynakları korumak için sıra duraklatıldı.\nBir sonraki {duration} içinde ses kanalına kimse katılmazsa, sıra silinecektir.",
+            "pauseQueueFooter": "Şarkı Sırası Durduruldu",
+            "pauseRequesterDeaf": "{requester} sağırlaştırılmış durumda, {song} duraklatılıyor. {duration} içinde sağırlaştırmayı kaldırmazsa şarkıları kuyruktan kaldırılacak.",
+            "pauseRequesterLeft": "{requester} ses kanalından ayrıldı, {song} duraklatılıyor. {duration} içinde geri dönmezse şarkıları kuyruktan kaldırılacak.",
+            "removeRequesterDeaf": "{requester} {duration} içinde sağırlaştırmayı kaldırmadı, kuyruktan {count} şarkı kaldırıldı.",
+            "removeRequesterLeft": "{requester} {duration} içinde geri dönmedi, kuyruktan {count} şarkı kaldırıldı.",
+            "resumeRequesterDeaf": "İsteyen kişi sağırlaştırmayı kaldırdı.\n{song} devam ediyor",
+            "resumeRequesterLeft": "İsteyen kişi ses kanalına geri döndü.\n{song} devam ediyor",
+            "reconfigureConnection": "Farklı bir bölgeye sahip bir ses kanalına taşındı, bağlantı yeniden yapılandırılıyor...",
+            "resumeQueue": "Birisi ses kanalına katıldı.\n{song} devam ediyor",
+            "resumeQueueFooter": "Şarkı Sırası Devam Ediyor",
+            "unableJoinStageMessage": "Konuşmacı olarak katılamıyorum, sıra silindi.",
+            "unableReconfigureConnection": "Bağlantı yeniden yapılandırılamıyor, sıra silindi."
+        }
+    },
+    "requestChannel": {
+        "title": "Müzik Çalar",
+        "standby": "Müzik çalmıyor. Başlamak için şarkı adı veya URL gönderin!",
+        "status": "Döngü",
+        "shuffle": "Karıştır",
+        "autoplay": "Otomatik-oynatma",
+        "volume": "Ses Seviyesi",
+        "queueFooter": "Kuyrukta kalan parça sayısı: {count} ({duration} süre)",
+        "live": "CANLI",
+        "songDuration": "Süre",
+        "requestedBy": "İsteyen",
+        "unknown": "Bilinmiyor",
+        "notInVoice": "Müzik istemek için bir ses kanalında olmanız gerekiyor.",
+        "deafened": "Müzik istemeden önce sağırlaştırmayı kaldırmanız gerekiyor.",
+        "requesterDeafPaused": "İsteyen kişi sağırlaştırılmış durumda. Sağırlaştırma kaldırılınca oynatma devam edecek.",
+        "requesterLeftPaused": "İsteyen kişi ses kanalından ayrıldı. Geri dönünce oynatma devam edecek.",
+        "noResults": "Aramanız için sonuç bulunamadı.",
+        "addedToQueue": "{song} kuyruğa eklendi.",
+        "resolvingPlaylist": "Çalma listesi çözümleniyor, lütfen bekleyin…",
+        "addingPlaylistToQueue": "Kuyruğa ekleniyor: {current}/{total}…",
+        "addedPlaylistToQueue": "{playlist} çalma listesinden {count} şarkı kuyruğa eklendi.",
+        "queueListTitle": "Kuyruk Listesi",
+        "emptyQueue": "Kuyruk boş.",
+        "nothingPlaying": "Şu anda hiçbir şey çalmıyor.",
+        "setChannel": "İstek kanalı {channel} olarak ayarlandı",
+        "removeChannel": "İstek kanalı kaldırıldı.",
+        "noChannel": "Şu anda ayarlanmış istek kanalı yok.",
+        "currentChannel": "Mevcut istek kanalı: {channel}",
+        "skipInProgress": "Lütfen bekleyin, bir atlama işlemi devam ediyor.",
+        "noPermission": "Bu işlemi gerçekleştirme izniniz yok. Sadece DJ rolü, sunucu yöneticileri veya şarkıyı isteyen kişi bunu yapabilir.",
+        "addedPlaylistSkipped": "{count} öğe atlandı: {reason}.",
+        "skippedReasonUnavailable": "özel/silinmiş veya kullanılamıyor",
+        "skippedReasonUnresolved": "çalınabilir bir şarkıyla eşleştirilemedi",
+        "skippedReasonSkipped": "tekrar, özel/silinmiş veya kullanılamıyor",
+        "resolvingSong": "Şarkı çözümleniyor, lütfen bekleyin…"
+    },
+    "reusable": {
+        "invalidUsage": "Geçersiz kullanım, lütfen daha fazla bilgi için {prefix} {name} kullanın.",
+        "pageFooter": "Sayfa {actual}/{total}",
+        "lyricsSource": "Kaynak: {source}",
+        "enabled": "Etkin",
+        "disabled": "Devre Dışı"
+    },
+    "utils": {
+        "commonUtil": {
+            "botMissingChannelPerms": "{channel} kanalında şu izinler eksik: {permissions}"
+        },
+        "cooldownMessage": "{author}, lütfen {timeleft} kadar bekleyin.",
+        "generalHandler": {
+            "errorJoining": "Ses kanalına katılırken hata oluştu, çünkü: {message}",
+            "errorPlaying": "Müzik çalmaya çalışırken bir hata oluştu, çünkü: {message}",
+            "handleVideoInitial": "Kuyruğa {length} adet yeni şarkı eklendi.",
+            "leftVC": "Uzun süre işlem olmadığı için ses kanalından ayrıldı.",
+            "queueEnded": "Çalma kuyruğu sona erdi, daha fazla müzik çalmak için {usage} kullanın.",
+            "startPlaying": "{song} çalınmaya başladı.",
+            "stopPlaying": "{song} durduruldu.",
+            "songRequeued": "{song} çalınırken sorun oluştu, başka bir deneme için kuyruğa yeniden eklendi.",
+            "allCookiesFailed": "Bot algılama nedeniyle tüm çerezler başarısız oldu! {logoutCmd} ardından {startCmd} kullanarak tekrar giriş yapın.",
+            "ageRestricted": "{song} yaş kısıtlamalı olduğu ve giriş yapmayı gerektirdiği için çalınamıyor."
+        },
+        "musicDecorator": {
+            "noInVC": "Üzgünüm ama bunu yapmak için bir ses kanalında olmanız gerekiyor.",
+            "noQueue": "Hiçbir şey çalınmıyor.",
+            "notPlaying": "Şu anda müzik çalmıyor. Lütfen önce bir şarkı çalın.",
+            "sameVC": "Aynı ses kanalında olmanız gerekiyor.",
+            "useRequestChannel": "Müzik komutları için lütfen istek kanalını {channel} kullanın.",
+            "useRequestChannelDirect": "Bu komut istek kanalında devre dışı bırakılmıştır. Lütfen kontrolleri kullanın veya şarkı adını/bağlantısını doğrudan yazın.",
+            "validVCJoinable": "Ses kanalınıza **`Bağlanılamıyor`**. Gerekli izinlerin verildiğinden emin olun.",
+            "validVCPermission": "Bu ses kanalında **`Konuşma`** yapılamıyor; gerekli izinlerin verildiğinden emin olun."
+        }
+    }
+}

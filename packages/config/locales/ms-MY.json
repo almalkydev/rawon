@@ -1,0 +1,504 @@
+{
+    "commands": {
+        "developers": {
+            "eval": {
+                "description": "Menilai dan menjalankan kod JavaScript",
+                "errorString": "Ralat",
+                "noCode": "Kod?",
+                "inputString": "Input",
+                "outputString": "Output",
+                "usage": "{prefix}eval <some code>"
+            },
+            "login": {
+                "description": "Mengurus sesi log masuk Google untuk autentikasi cookies YouTube",
+                "usage": "{prefix}login <start | status | logout>",
+                "slashStartDescription": "Mulakan sesi log masuk Google melalui pelayar",
+                "slashStatusDescription": "Semak status sesi log masuk semasa",
+                "slashLogoutDescription": "Tutup sesi pelayar",
+                "invalidSubcommand": "Penggunaan: {loginUsage}",
+                "alreadyLoggedIn": "Sudah log masuk. Guna {logoutCmd} dahulu untuk memulakan sesi baharu.",
+                "launching": "Melancarkan pelayar untuk log masuk Google...",
+                "sessionTitle": "Sesi Log Masuk Google",
+                "sessionDescription": "Tetingkap pelayar telah dibuka. Log masuk dengan akaun Google anda di sana.",
+                "step1WithUrl": "1. Cari tetingkap pelayar yang baru muncul di pelayan",
+                "step1Fallback": "1. Cari tetingkap pelayar yang baru muncul di pelayan",
+                "step2WithUrl": "2. Log masuk dengan akaun Google anda",
+                "step2Fallback": "2. Jika jarak jauh, buka DevTools via `chrome://inspect` dan tambah {target}",
+                "step3": "3. Selesai log masuk akan dikesan secara automatik",
+                "step4": "4. URL DevTools jarak jauh: {url} (pilihan)",
+                "timeLimit": "Anda mempunyai {minutes} minit untuk menyelesaikan log masuk.",
+                "loginSuccess": "Log Masuk Berjaya",
+                "loginSuccessDescription": "Berjaya log masuk{email}.\n\nCookies telah dieksport dan disimpan.\nYouTube sepatutnya berfungsi tanpa masalah pengesanan bot.",
+                "loginSuccessEmail": " sebagai {email}",
+                "loginFailed": "Log Masuk Gagal",
+                "loginFailedDescription": "Log masuk tamat masa atau dibatalkan.\n\nGuna {cmd} untuk mencuba lagi.",
+                "loginError": "Ralat Log Masuk",
+                "loginErrorDescription": "Ralat berlaku semasa log masuk:\n{error}",
+                "statusTitle": "Status Log Masuk & Cookie",
+                "logoutSuccess": "Sesi log masuk dikosongkan.\n\nSemua cookies dan data profil telah dipadam.\nGuna {cmd} untuk memulakan sesi baharu.",
+                "logoutNoBrowser": "Tiada sesi log masuk aktif.",
+                "cookieFileField": "Fail Cookie",
+                "statusActive": "Aktif",
+                "statusMissing": "Tiada cookies tersedia",
+                "sizeLabel": "Saiz",
+                "lastRefreshLabel": "Penyegaran Terakhir",
+                "lastRefreshNever": "Tidak pernah",
+                "googleLoginField": "Login Google",
+                "sessionLoggedIn": "Sudah log masuk",
+                "sessionWaiting": "Menunggu log masuk...",
+                "sessionError": "Ralat: {error}",
+                "sessionIdle": "Belum dimulakan",
+                "accountLabel": "Akaun",
+                "accountNA": "`N/A`",
+                "gettingStartedField": "Mula",
+                "gettingStartedText": "Guna {loginCmd} untuk log masuk ke Google dan jana cookies secara automatik.",
+                "statsTitle": "Statistik"
+            },
+            "dbExport": {
+                "description": "Eksport keseluruhan pangkalan data ke fail JSON",
+                "success": "Pangkalan data berjaya dieksport!",
+                "totalRecords": "Jumlah Rekod",
+                "savedTo": "Turut disimpan di: `{path}`",
+                "failed": "Gagal mengeksport pangkalan data: {error}"
+            },
+            "dbImport": {
+                "description": "Import pangkalan data dari fail JSON",
+                "usage": "{prefix}db-import [lampiran | url | nama fail]",
+                "slashFileDescription": "Fail JSON untuk diimport",
+                "slashUrlDescription": "URL ke fail JSON (atau nama fail dalam folder data)",
+                "provideJson": "Sila berikan fail JSON.",
+                "provideJsonHint": "Sila berikan fail JSON melalui lampiran, URL atau nama fail dalam folder data.",
+                "invalidFormat": "Format eksport pangkalan data tidak sah.",
+                "success": "Pangkalan data berjaya diimport!",
+                "totalRecords": "Jumlah Rekod",
+                "exportDate": "Tarikh Eksport",
+                "version": "Versi",
+                "failed": "Gagal mengimport pangkalan data: {error}"
+            },
+            "setup": {
+                "description": "Konfigurasi tetapan bot (pembangun sahaja)",
+                "usage": "{prefix}setup <tetapan> [nilai]",
+                "unknownSetting": "Tetapan tidak dikenali. Guna {command} untuk lihat tetapan yang tersedia.",
+                "embedTitle": "Tetapan Bot",
+                "embedColor": {
+                    "set": "Warna embed telah ditetapkan kepada {color}",
+                    "reset": "Warna embed telah ditetapkan semula kepada lalai.",
+                    "invalid": "Kod warna hex tidak sah. Sila gunakan kod hex 6 aksara (cth: `#FF5733` atau `FF5733`)."
+                },
+                "yesEmoji": {
+                    "set": "Emoji kejayaan telah ditetapkan kepada {emoji}",
+                    "reset": "Emoji kejayaan telah ditetapkan semula kepada lalai."
+                },
+                "noEmoji": {
+                    "set": "Emoji ralat telah ditetapkan kepada {emoji}",
+                    "reset": "Emoji ralat telah ditetapkan semula kepada lalai."
+                },
+                "altPrefix": {
+                    "set": "Awalan alternatif telah ditetapkan kepada: {prefixes}",
+                    "reset": "Awalan alternatif telah ditetapkan semula kepada lalai.",
+                    "invalid": "Sila berikan sekurang-kurangnya satu awalan."
+                },
+                "splash": {
+                    "set": "Imej splash saluran permintaan telah ditetapkan.",
+                    "reset": "Imej splash saluran permintaan telah ditetapkan semula kepada lalai.",
+                    "invalid": "Sila berikan URL yang sah."
+                },
+                "defaultVolume": {
+                    "set": "Kelantangan lalai telah ditetapkan kepada {volume}",
+                    "reset": "Kelantangan lalai telah ditetapkan semula.",
+                    "invalid": "Kelantangan mestilah nombor antara `1` dan `200`"
+                },
+                "selectionType": {
+                    "set": "Jenis pemilihan muzik telah ditetapkan kepada {type}",
+                    "reset": "Jenis pemilihan muzik telah ditetapkan semula kepada lalai.",
+                    "invalid": "Jenis pemilihan mestilah `message` atau `selectmenu`"
+                },
+                "audioCache": {
+                    "set": "Cache audio telah {state}",
+                    "enabled": "diaktifkan",
+                    "disabled": "dinyahaktifkan"
+                },
+                "searchProvider": {
+                    "set": "Penyedia carian telah ditetapkan kepada {provider}",
+                    "reset": "Penyedia carian telah ditetapkan semula kepada lalai (`DSP`).",
+                    "invalid": "Penyedia carian mestilah `dsp` atau `direct`"
+                },
+                "resetAll": "Semua tetapan bot telah ditetapkan semula kepada lalai.",
+                "alwaysOn": {
+                    "set": "Mod Sentiasa Hidup (24/7) telah {state}",
+                    "enabled": "didayakan",
+                    "disabled": "dilumpuhkan"
+                }
+            }
+        },
+        "general": {
+            "about": {
+                "aboutFooter": "{botname} - Maklumat Bot",
+                "botUptimeString": "Bot Uptime",
+                "botVersionString": "Versi Bot",
+                "cachedUsersString": "Pengguna dalam Cache",
+                "channelsString": "Saluran",
+                "commitString": "Commit",
+                "description": "Papar maklumat bot",
+                "discordJSVersionString": "Versi Discord.js",
+                "ffmpegVersionString": "Versi FFmpeg",
+                "nodeVersionString": "Versi Node.js",
+                "osUptimeString": "OS Uptime",
+                "processUptimeString": "Process Uptime",
+                "serversString": "Server",
+                "sourceCodeString": "Kod sumber"
+            },
+            "help": {
+                "aliasesString": "Alias",
+                "authorString": "{username} - Senarai Arahan",
+                "commandDetailTitle": "{username} - Maklumat arahan {command}",
+                "commandSelectionString": "Sila pilih arahan",
+                "commandUsageFooter": "<> = diperlukan | [] = pilihan {devOnly}",
+                "description": "Memaparkan senarai arahan atau maklumat suatu arahan",
+                "descriptionString": "Penerangan",
+                "disabledSelection": "Tiada apa untuk dipilih di sini",
+                "footerString": "{prefix}help <arahan> untuk maklumat lanjut suatu arahan",
+                "nameString": "Nama",
+                "noAliases": "Tiada.",
+                "noCommandSuggest": "Arahan tidak ditemui. Maksud anda ini?",
+                "noCommand": "Arahan tidak ditemui.",
+                "slashDescription": "Nama arahan untuk melihat maklumat lanjut",
+                "usage": "{prefix}help [arahan]",
+                "usageString": "Cara penggunaan"
+            },
+            "invite": {
+                "clickURL": "- **[Klik di sini]({url})** untuk menjemput bot{botNum} ke server anda.",
+                "description": "Dapatkan pautan jemputan untuk bot ini",
+                "inviteTitle": "{bot} - Pautan Jemputan"
+            },
+            "ping": {
+                "description": "Memaparkan ping semasa bot",
+                "footerString": "Kependaman: {user}"
+            },
+            "language": {
+                "description": "Menetapkan bahasa bot di server ini",
+                "noPermission": "Anda perlu kebenaran **Pengelola Server** untuk menggunakan arahan ini.",
+                "slashSetDescription": "Tetapkan bahasa server",
+                "slashViewDescription": "Paparkan bahasa server semasa",
+                "slashResetDescription": "Tetapkan semula ke bahasa asal",
+                "slashLocaleOption": "Bahasa yang mahu ditetapkan",
+                "usage": "{prefix}language <view | set | reset> [locale]",
+                "embedTitle": "Tetapan Bahasa",
+                "currentLanguage": "Bahasa semasa:",
+                "languageSet": "Bahasa server telah ditetapkan ke",
+                "languageReset": "Bahasa server telah ditetapkan ke bahasa asal:",
+                "invalidLocale": "Bahasa tidak tersedia. Bahasa yang tersedia:",
+                "availableLocales": "Bahasa yang tersedia"
+            },
+            "prefix": {
+                "currentPrefix": "Prefix semasa: {prefix}",
+                "description": "Tukar prefix arahan untuk server ini",
+                "embedTitle": "Tetapan Prefix",
+                "noPermission": "Anda perlu kebenaran **Pengelola Server** untuk menggunakan arahan ini.",
+                "prefixReset": "Prefix telah ditetapkan semula ke: {prefix}",
+                "prefixSet": "Prefix telah ditetapkan ke: {prefix}",
+                "prefixTooLong": "Prefix tidak boleh melebihi `10` aksara.",
+                "slashPrefixOption": "Prefix baru (maksimum `10` aksara)",
+                "slashResetDescription": "Tetapkan semula ke prefix asal",
+                "slashSetDescription": "Tetapkan prefix khas untuk server ini",
+                "slashViewDescription": "Paparkan prefix semasa",
+                "usage": "{prefix}prefix [prefix baru | view | reset]"
+            }
+        },
+        "music": {
+            "dj": {
+                "description": "Tukar tetapan fungsi DJ",
+                "usage": "{prefix}dj <enable | disable | role> [role]",
+                "disable": "Dilumpuhkan",
+                "disableText": "Fungsi DJ telah **`Dilumpuhkan`**",
+                "embedTitle": "Fungsi DJ",
+                "enable": "Aktif",
+                "enableText": "Fungsi DJ telah **`Aktif`**",
+                "newRoleText": "role baharu",
+                "noPermission": "Anda perlu kebenaran **Pengelola Server** untuk menggunakan arahan ini.",
+                "role": {
+                    "current": "Role DJ semasa: <@&{role}>",
+                    "invalid": "Role tidak sah.",
+                    "noRole": "Role DJ belum ditetapkan, tetapkan dengan {djRoleCmd}",
+                    "success": "Role DJ telah ditetapkan ke <@&{role}>"
+                },
+                "slashDisableDescription": "Lumpuhkan fungsi DJ",
+                "slashEnableDescription": "Aktifkan fungsi DJ",
+                "slashRoleDescription": "Lihat atau ubah fungsi DJ",
+                "slashRoleNewRoleOption": "Role baharu untuk DJ"
+            },
+            "filter": {
+                "availableFilters": "Saringan yang disediakan",
+                "currentlyUsedFilters": "Saringan Aktif",
+                "currentState": "{filter} telah {state}",
+                "description": "Konfigurasi saringan lagu",
+                "usage": "{prefix}filter <enable | disable | status> [saringan]",
+                "embedFooter": "Untuk {opstate, select, enable {aktifkan} other {lumpuhkan}} saringan ini, gunakan {prefix}filter {opstate} {filter}",
+                "filterSet": "Saringan {filter} telah {state}",
+                "filterRestartedFooter": "Lagu dimulakan semula (audio masih memuat).",
+                "filterNoQueueFooter": "Saringan akan aktif sebaik sahaja muzik dimainkan.",
+                "slashStateDescription": "{state, select, enable {Aktifkan} other {Lumpuhkan}} saringan lagu",
+                "slashStateFilterDescription": "Saringan lagu yang akan {state, select, enable {diaktifkan} other {dilumpuhkan}}",
+                "slashStatusDescription": "Semak status semasa saringan lagu",
+                "slashStatusFilterDescription": "Saringan lagu yang hendak disemak",
+                "specifyFilter": "Sila nyatakan saringan lagu."
+            },
+            "lyrics": {
+                "description": "Paparkan lirik lagu",
+                "noLyrics": "Lirik {song} tidak ditemui.",
+                "noQuery": "Tiada lagu yang sedang dimainkan, atau maklumat arahan tidak lengkap.",
+                "searchingLyrics": "Mencari lirik...",
+                "slashDescription": "Lagu yang mahu dicari",
+                "usage": "{prefix}lyrics [lagu]"
+            },
+            "nowplaying": {
+                "description": "Tunjukkan status main semula",
+                "disableButton": "Butang-butang sebelum ini tidak lagi aktif dan telah dipadam.",
+                "pauseResumeButton": "Jeda/Sambung",
+                "skipButton": "Langkau",
+                "stopButton": "Berhenti",
+                "showQueueButton": "Lihat Giliran",
+                "emptyQueue": "Giliran sedang kosong.",
+                "error": "Ralat semasa mengambil maklumat lagu semasa: {message}",
+                "live": "LIVE",
+                "requestedBy": "Permintaan",
+                "unknownDuration": "Tempoh tidak diketahui"
+            },
+            "pause": {
+                "alreadyPause": "Main semula sudah dijeda.",
+                "description": "Jeda main semula",
+                "pauseMessage": "Main semula dijeda."
+            },
+            "play": {
+                "alreadyPlaying": "Main semula sudah aktif di saluran suara {voiceChannel}",
+                "description": "Jom layan muzik",
+                "noSongData": "Pautan tersebut tidak mempunyai data lagu.",
+                "slashQueryDescription": "Masukkan carian",
+                "usage": "{prefix}play <carian | url>"
+            },
+            "queue": {
+                "description": "Tunjukkan senarai giliran"
+            },
+            "remove": {
+                "description": "Padam lagu dari giliran",
+                "noPermission": "Anda tiada kebenaran untuk menggunakan arahan ini.",
+                "noPositions": "Sila nyatakan kedudukan lagu untuk dipadam.",
+                "slashPositionsDescription": "Kedudukan lagu untuk dipadam, diasingkan dengan koma atau ruang",
+                "songSkip": "Lagu semasa dipadam, melangkau.\n\n",
+                "songsRemoved": "{removed} lagu telah dialih keluar daripada giliran.",
+                "usage": "{prefix}remove <kedudukan>"
+            },
+            "repeat": {
+                "actualMode": "Mod ulangan kini {mode}",
+                "description": "Mengulang lagu semasa atau giliran",
+                "footer": "Untuk menukar mod, semak {prefix}help repeat",
+                "newMode": "Mod ulangan ditetapkan ke {mode}",
+                "slashDisable": "Melumpuhkan mod ulangan",
+                "slashQueue": "Menetapkan mod ulangan ke **`Giliran`**",
+                "slashSong": "Menetapkan mod ulangan ke **`Lagu`**",
+                "usage": "{prefix}repeat <{options}>"
+            },
+            "resume": {
+                "alreadyResume": "Main semula tidak dijeda.",
+                "description": "Sambung mainkan muzik",
+                "resumeMessage": "Muzik disambung semula."
+            },
+            "search": {
+                "cancelMessage": "Taip {cancel} atau c untuk membatalkan pilihan muzik.",
+                "canceledMessage": "Pilihan muzik dibatalkan.",
+                "description": "Mainkan muzik berdasarkan carian anda",
+                "disabledSelection": "Tiada apa untuk dipilih di sini",
+                "interactionContent": "Sila pilih lagu",
+                "interactionPlaceholder": "Sila pilih lagu",
+                "noQuery": "Sila masukkan kata kunci untuk dicari.",
+                "noSelection": "Input tidak sah atau kosong, pilihan muzik dibatalkan.",
+                "noTracks": "Tiada hasil.",
+                "queueEmbed": "Sila pilih lagu; anda boleh pilih beberapa lagu sekaligus dengan memisahkannya menggunakan jarak atau {separator}.\n",
+                "slashQueryDescription": "Carian",
+                "slashSourceDescription": "Nyatakan sumber muzik",
+                "trackSelectionMessage": "Pilihan Lagu",
+                "usage": "{prefix}search <query> [sumber]"
+            },
+            "shuffle": {
+                "actualState": "Mod acak kini {state}",
+                "description": "Tetapkan mod acak",
+                "newState": "Mod acak ditetapkan ke {state}"
+            },
+            "autoplay": {
+                "actualState": "Mod main otomatis kini {state}",
+                "description": "Tetapkan mod main otomatis",
+                "newState": "Mod main otomatis ditetapkan ke {state}"
+            },
+            "seek": {
+                "cantSeekLive": "Tidak boleh melangkau masa dalam live stream.",
+                "cantSeekSoundcloud": "Tidak boleh melangkau masa dalam trek SoundCloud.",
+                "description": "Langkau ke masa tertentu dalam lagu semasa",
+                "exceedsDuration": "Masa yang dicari melebihi tempoh lagu ({duration}).",
+                "invalidTime": "Format masa tidak sah: {time}. Gunakan format seperti `1:30` atau `90`",
+                "noPlaying": "Tiada lagu yang sedang dimainkan.",
+                "noTime": "Sila nyatakan masa untuk dilangkau.",
+                "notCached": "Belum boleh melangkau masa untuk lagu ini. Sila tunggu audio selesai dimuat.",
+                "seeked": "Melangkau ke {time}",
+                "slashTimeDescription": "Masa untuk dilangkau (cth: `1:30` atau `90`)",
+                "usage": "{prefix}seek <masa>",
+                "waitingForCache": "Sila tunggu, audio masih sedang dimuat..."
+            },
+            "skip": {
+                "description": "Melangkau muzik",
+                "skipMessage": "Melangkau {song}",
+                "voteResultMessage": "{length}/{required} telah mengundi untuk melangkau lagu."
+            },
+            "skipTo": {
+                "cantPlay": "Anda tidak boleh melangkau ke lagu yang sedang dimainkan.",
+                "description": "Langkau ke kedudukan tertentu dalam giliran",
+                "invalidPosition": "Sila nyatakan nombor kedudukan yang sah.",
+                "noPermission": "Anda tidak mempunyai kebenaran untuk menggunakan arahan ini.",
+                "noSongPosition": "Gagal mencari lagu di kedudukan tersebut.",
+                "skipMessage": "Melangkau ke {song}",
+                "slashFirstDescription": "Kembali ke lagu pertama dalam giliran",
+                "slashLastDescription": "Langkau ke lagu terakhir dalam giliran",
+                "slashPositionDescription": "Kedudukan lagu dalam giliran",
+                "slashSpecificDescription": "Langkau ke kedudukan tertentu dalam giliran",
+                "usage": "{prefix}skipto <{options} | nombor>"
+            },
+            "stop": {
+                "description": "Hentikan main semula",
+                "stoppedMessage": "Main semula dihentikan."
+            },
+            "volume": {
+                "changeVolume": "Untuk mengubah kelantangan, masukkan nombor kelantangan apabila menggunakan arahan ini.",
+                "currentVolume": "Kelantangan semasa ialah {volume}",
+                "description": "Ubah kelantangan main semula",
+                "newVolume": "Kelantangan ditetapkan ke {volume}",
+                "noPermission": "Anda memerlukan peranan DJ atau kebenaran **Pengelola Server** untuk menetapkan kelantangan melebihi `100%`",
+                "plsPause": "Sila jedakan muzik daripada menetapkan kelantangan kepada {volume}",
+                "slashDescription": "Kelantangan baharu",
+                "usage": "{prefix}volume [Kelantangan baharu]"
+            },
+            "requestChannel": {
+                "description": "Tetapkan saluran permintaan untuk muzik",
+                "noPermission": "Anda perlu kebenaran **Pengelola Server** untuk menggunakan arahan ini.",
+                "invalidChannel": "Sila berikan saluran teks yang sah.",
+                "noBotPermissions": "Tidak dapat menyemak kebenaran untuk saluran tersebut.",
+                "missingBotPermissions": "Kebenaran berikut tiada dalam saluran tersebut: {permissions}",
+                "failedToSetup": "Gagal menyediakan saluran permintaan. Sila semak kebenaran saluran.",
+                "alreadyHasChannel": "Server ini telah ada saluran permintaan yang ditetapkan ke {channel}. Padam dahulu sebelum membuat yang baharu.",
+                "channelAlreadyInUse": "Saluran ini telah pun dijadikan saluran permintaan.",
+                "noChannelToRemove": "Tiada saluran permintaan untuk dipadam.",
+                "slashSetDescription": "Tetapkan saluran sebagai saluran permintaan",
+                "slashRemoveDescription": "Padam saluran permintaan",
+                "slashStatusDescription": "Paparkan saluran permintaan semasa",
+                "slashChannelDescription": "Saluran yang mahu dijadikan saluran permintaan",
+                "usage": "{prefix}requestchannel <set | remove | status> [saluran]"
+            }
+        }
+    },
+    "events": {
+        "channelUpdate": {
+            "connectionReconfigured": "Sambungan berjaya dikonfigurasi semula.",
+            "reconfigureConnection": "Wilayah saluran suara telah berubah, sedang mengonfigurasi semula sambungan...",
+            "unableReconfigureConnection": "Gagal mengonfigurasi semula sambungan, senarai giliran telah dipadamkan."
+        },
+        "createInteraction": {
+            "message1": "Tindakan ini khas untuk <@{user}> dan staf server.",
+            "devOnly": "Arahan khusus untuk pembangun.",
+            "lyricsCommandNotFound": "Arahan lirik tidak dijumpai.",
+            "wrongBot": "Perintah ini mesti dilaksanakan pada {botMention} sebagai bot utama untuk pelayan ini.",
+            "primaryBotFallback": "bot utama"
+        },
+        "createMessage": "Hai {author}, prefix: {prefix}",
+        "cmdLoading": "Memuat...",
+        "voiceStateUpdate": {
+            "connectionReconfigured": "Sambungan berjaya dikonfigurasi semula.",
+            "deleteQueue": "{duration} telah tamat dan saluran suara kosong, senarai giliran telah dibersihkan.",
+            "deleteQueueFooter": "Giliran Dipadam",
+            "disconnectFromVCMessage": "Terputus daripada saluran suara, senarai giliran telah dipadamkan.",
+            "joinStageMessage": "Berjaya menyertai saluran pentas sebagai Speaker.",
+            "joiningAsSpeaker": "Berpindah ke saluran pentas, cuba menyertai sebagai Speaker...",
+            "pauseQueue": "Saluran suara kosong. Giliran dijeda untuk menjimatkan sumber.\nSekiranya tiada sesiapa masuk ke saluran suara dalam masa {duration}, giliran akan dipadam.",
+            "pauseQueueFooter": "Giliran Dijeda",
+            "pauseRequesterDeaf": "{requester} telah mematikan audio, menjeda {song}. Jika audio tidak dihidupkan semula dalam {duration}, lagu mereka akan dikeluarkan daripada giliran.",
+            "pauseRequesterLeft": "{requester} telah meninggalkan saluran suara, menjeda {song}. Jika tidak menyertai semula dalam {duration}, lagu mereka akan dikeluarkan daripada giliran.",
+            "removeRequesterDeaf": "{requester} tidak menghidupkan semula audio dalam {duration}, {count} lagu dikeluarkan daripada giliran.",
+            "removeRequesterLeft": "{requester} tidak menyertai semula dalam {duration}, {count} lagu dikeluarkan daripada giliran.",
+            "resumeRequesterDeaf": "Pemohon telah menghidupkan semula audio.\nMenyambung semula lagu {song}",
+            "resumeRequesterLeft": "Pemohon telah menyertai semula saluran suara.\nMenyambung semula lagu {song}",
+            "reconfigureConnection": "Berpindah ke saluran suara dengan wilayah berlainan, menetapkan semula sambungan...",
+            "resumeQueue": "Seseorang telah menyertai saluran suara.\nMenyambung semula lagu {song}",
+            "resumeQueueFooter": "Menyambung semula giliran",
+            "unableJoinStageMessage": "Gagal menyertai sebagai Speaker, senarai giliran telah dipadamkan.",
+            "unableReconfigureConnection": "Gagal mengonfigurasi semula sambungan, senarai giliran telah dipadamkan."
+        }
+    },
+    "requestChannel": {
+        "title": "Pemain Muzik",
+        "standby": "Tiada muzik dimainkan. Hantar tajuk lagu atau pautan untuk mula dengar muzik!",
+        "status": "Ulangan",
+        "shuffle": "Acak",
+        "autoplay": "Main-automatik",
+        "volume": "Kelantangan",
+        "queueFooter": "Lagu berbaki dalam giliran: {count} ({duration} tempoh)",
+        "live": "LIVE",
+        "songDuration": "Tempoh",
+        "requestedBy": "Permintaan",
+        "unknown": "Tidak diketahui",
+        "notInVoice": "Anda perlu menyertai saluran suara untuk membuat permintaan muzik.",
+        "deafened": "Anda perlu menghidupkan semula audio sebelum membuat permintaan muzik.",
+        "requesterDeafPaused": "Pemohon telah mematikan audio. Main semula akan diteruskan apabila audio dihidupkan semula.",
+        "requesterLeftPaused": "Pemohon telah meninggalkan saluran suara. Main semula akan diteruskan apabila mereka menyertai semula.",
+        "noResults": "Tiada hasil carian yang sepadan dengan permintaan anda.",
+        "addedToQueue": "Menambahkan {song} ke dalam giliran.",
+        "resolvingPlaylist": "Sedang menyelesaikan senarai main, sila tunggu…",
+        "addingPlaylistToQueue": "Menambah ke giliran: {current}/{total}…",
+        "addedPlaylistToQueue": "Menambahkan {count} lagu dari {playlist} ke dalam giliran.",
+        "queueListTitle": "Senarai Giliran",
+        "emptyQueue": "Tiada lagu dalam giliran.",
+        "nothingPlaying": "Tiada yang sedang dimainkan.",
+        "setChannel": "Saluran permintaan telah ditetapkan ke {channel}",
+        "removeChannel": "Saluran permintaan telah dipadam.",
+        "noChannel": "Tiada saluran permintaan yang ditetapkan.",
+        "currentChannel": "Saluran permintaan sekarang: {channel}",
+        "skipInProgress": "Sila tunggu, proses melangkau sedang berjalan.",
+        "noPermission": "Anda tidak mempunyai kebenaran untuk melakukan tindakan ini. Hanya DJ, pengelola server, atau pemohon lagu yang dapat melakukan ini.",
+        "addedPlaylistSkipped": "{count} item dilangkau: {reason}.",
+        "skippedReasonUnavailable": "private/deleted atau tidak tersedia",
+        "skippedReasonUnresolved": "gagal dipadankan dengan lagu yang boleh dimainkan",
+        "skippedReasonSkipped": "duplikat, private/deleted, atau tidak tersedia",
+        "resolvingSong": "Sedang menyelesaikan lagu, sila tunggu…"
+    },
+    "reusable": {
+        "invalidUsage": "Penggunaan tidak sah, sila gunakan {prefix} {name} untuk maklumat lanjut.",
+        "pageFooter": "Muka {actual} dari {total}",
+        "lyricsSource": "Sumber: {source}",
+        "enabled": "Aktif",
+        "disabled": "Dilumpuhkan"
+    },
+    "utils": {
+        "commonUtil": {
+            "botMissingChannelPerms": "Kebenaran berikut tiada dalam {channel}: {permissions}"
+        },
+        "cooldownMessage": "{author}, sila tunggu {timeleft}.",
+        "generalHandler": {
+            "errorJoining": "Ralat ketika menyertai saluran suara, akibat: {message}",
+            "errorPlaying": "Ralat terjadi saat memainkan muzik, akibat: {message}",
+            "handleVideoInitial": "Menambah {length} lagu ke dalam giliran.",
+            "leftVC": "Meninggalkan saluran suara kerana tidak aktif terlalu lama.",
+            "queueEnded": "Giliran telah berakhir, gunakan {usage} untuk terus mendengar muzik.",
+            "startPlaying": "Mula memainkan {song}",
+            "stopPlaying": "Berhenti memainkan {song}",
+            "songRequeued": "Gagal memainkan {song}, dimasukkan semula ke giliran untuk cubaan lain.",
+            "allCookiesFailed": "Semua cookies gagal kerana dikesan sebagai bot! Guna {logoutCmd} kemudian {startCmd} untuk log masuk semula.",
+            "ageRestricted": "Tidak dapat memainkan {song} kerana ia disekat umur dan memerlukan log masuk."
+        },
+        "musicDecorator": {
+            "noInVC": "Anda perlu berada di dalam saluran suara untuk melakukannya.",
+            "noQueue": "Tiada yang sedang dimainkan.",
+            "notPlaying": "Tiada muzik sedang dimainkan. Sila mainkan lagu terlebih dahulu.",
+            "sameVC": "Anda mesti berada dalam saluran suara yang sama.",
+            "useRequestChannel": "Sila gunakan saluran permintaan {channel} untuk menggunakan arahan.",
+            "useRequestChannelDirect": "Arahan ini dilumpuhkan dalam saluran permintaan. Sila guna butang kawalan atau taip tajuk/pautan lagu.",
+            "validVCJoinable": "Tidak dapat **`Menyertai`** saluran suara, pastikan kebenaran yang betul diberikan.",
+            "validVCPermission": "Tidak dapat **`Bercakap`** di saluran suara; pastikan kebenaran yang betul diberikan."
+        }
+    }
+}

@@ -1,0 +1,18 @@
+{
+    "extends": "./tsconfig.base.json",
+    "compilerOptions": {
+        "noEmit": true,
+        "paths": {
+            "@rawon/shared": ["./packages/shared/src/index.ts"],
+            "@rawon/config": ["./packages/config/src/index.ts"],
+            "@rawon/queue": ["./packages/queue/src/index.ts"],
+            "@rawon/cache": ["./packages/cache/src/index.ts"],
+            "@rawon/providers": ["./packages/providers/src/index.ts"],
+            "@rawon/audio-engine": ["./packages/audio-engine/src/index.ts"],
+            "@rawon/database": ["./packages/database/src/index.ts"],
+            "@rawon/music-core": ["./packages/music-core/src/index.ts"],
+            "@rawon/discord": ["./packages/discord/src/index.ts"]
+        }
+    },
+    "include": ["tests/**/*.ts"]
+}

@@ -1,0 +1,19 @@
+{
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "composite": true,
+        "rootDir": "src",
+        "outDir": "dist"
+    },
+    "references": [
+        { "path": "../../packages/shared" },
+        { "path": "../../packages/config" },
+        { "path": "../../packages/cache" },
+        { "path": "../../packages/providers" },
+        { "path": "../../packages/audio-engine" },
+        { "path": "../../packages/database" },
+        { "path": "../../packages/music-core" },
+        { "path": "../../packages/discord" }
+    ],
+    "include": ["src/**/*.ts"]
+}

@@ -1,0 +1,20 @@
+{
+    "name": "@rawon/worker",
+    "version": "2.0.0",
+    "private": true,
+    "type": "module",
+    "main": "./dist/index.js",
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "typecheck": "tsc -p tsconfig.json --noEmit",
+        "start": "node dist/index.js"
+    },
+    "dependencies": {
+        "@rawon/audio-engine": "workspace:*",
+        "@rawon/cache": "workspace:*",
+        "@rawon/config": "workspace:*",
+        "@rawon/database": "workspace:*",
+        "@rawon/providers": "workspace:*",
+        "@rawon/shared": "workspace:*"
+    }
+}
