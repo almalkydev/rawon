@@ -213,16 +213,17 @@ describe("Request Channel Parser, Discord Components V2 UI & Command Parity", ()
         expect(loginOptions?.some((opt) => opt.name === "cookies")).toBe(true);
     });
 
-    it("parses Netscape cookies from multiline text, escaped env strings, and base64 blobs", () => {
+    it("parses Netscape cookies (including #HttpOnly_ and BOM), escaped env strings, Cookie-Editor JSON, and base64 blobs", () => {
         const netscapeText = [
-            "# Netscape HTTP Cookie File",
+            "\uFEFF# Netscape HTTP Cookie File",
             ".youtube.com\tTRUE\t/\tTRUE\t1893456000\tSAPISID\tsecret_sapisid",
+            "#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t1893456000\t__Secure-1PSID\tsecret_psid",
             ".google.com\tTRUE\t/\tFALSE\t0\tNID\tsession_nid",
             "malformed_line_only_three\tparts\there",
         ].join("\n");
 
         const direct = parseNetscapeCookieEntries(netscapeText);
-        expect(direct).toHaveLength(2);
+        expect(direct).toHaveLength(3);
         expect(direct[0]).toMatchObject({
             domain: ".youtube.com",
             includeSubdomains: true,
@@ -232,14 +233,59 @@ describe("Request Channel Parser, Discord Components V2 UI & Command Parity", ()
             name: "SAPISID",
             value: "secret_sapisid",
         });
+        expect(direct[1]).toMatchObject({
+            domain: ".youtube.com",
+            httpOnly: true,
+            name: "__Secure-1PSID",
+            value: "secret_psid",
+        });
 
         const escaped = parseNetscapeCookieEntries(netscapeText.replace(/\n/g, "\\n"));
-        expect(escaped).toHaveLength(2);
-        expect(escaped[1]?.name).toBe("NID");
+        expect(escaped).toHaveLength(3);
+        expect(escaped[2]?.name).toBe("NID");
 
         const encoded = Buffer.from(netscapeText, "utf8").toString("base64");
         const decoded = parseNetscapeCookieEntries(encoded);
-        expect(decoded).toHaveLength(2);
-        expect(decoded[0]?.value).toBe("secret_sapisid");
+        expect(decoded).toHaveLength(3);
+        expect(decoded[1]?.value).toBe("secret_psid");
+
+        const jsonExport = JSON.stringify([
+            {
+                domain: ".youtube.com",
+                expirationDate: 1893456000.75,
+                hostOnly: false,
+                httpOnly: true,
+                name: "LOGIN_INFO",
+                path: "/",
+                secure: true,
+                value: "login_token_value",
+            },
+            {
+                domain: ".youtube.com",
+                expirationDate: 1893456000,
+                hostOnly: false,
+                httpOnly: false,
+                name: "PREF",
+                path: "/",
+                secure: true,
+                value: "f6=40000000",
+            },
+        ]);
+        const fromJson = parseNetscapeCookieEntries(jsonExport);
+        expect(fromJson).toHaveLength(2);
+        expect(fromJson[0]).toMatchObject({
+            domain: ".youtube.com",
+            includeSubdomains: true,
+            httpOnly: true,
+            secure: true,
+            expiration: 1893456000,
+            name: "LOGIN_INFO",
+            value: "login_token_value",
+        });
+        const fromJsonB64 = parseNetscapeCookieEntries(
+            Buffer.from(jsonExport, "utf8").toString("base64"),
+        );
+        expect(fromJsonB64).toHaveLength(2);
+        expect(fromJsonB64[1]?.name).toBe("PREF");
     });
 });

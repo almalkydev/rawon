@@ -10,6 +10,7 @@ export interface NetscapeCookieEntry {
     expiration: number;
     name: string;
     value: string;
+    httpOnly?: boolean;
 }
 
 export class CookieStore {
@@ -37,17 +38,21 @@ export class CookieStore {
         const lines = [
             "# Netscape HTTP Cookie File",
             "# Exported by Rawon V2 CookieStore",
-            ...entries.map((c) =>
-                [
-                    c.domain,
+            ...entries.map((c) => {
+                const domainField =
+                    c.httpOnly && !c.domain.startsWith("#HttpOnly_")
+                        ? `#HttpOnly_${c.domain}`
+                        : c.domain;
+                return [
+                    domainField,
                     c.includeSubdomains ? "TRUE" : "FALSE",
                     c.path || "/",
                     c.secure ? "TRUE" : "FALSE",
                     Math.floor(c.expiration || 0),
                     c.name,
                     c.value,
-                ].join("\t"),
-            ),
+                ].join("\t");
+            }),
         ];
         const content = `${lines.join("\n")}\n`;
         const cookieHash = createHash("sha256").update(content).digest("hex");
@@ -107,42 +112,105 @@ export class CookieStore {
     }
 }
 
+function stripBom(text: string): string {
+    return text.replace(/^\uFEFF/u, "");
+}
+
 function parseNetscapeLines(text: string): NetscapeCookieEntry[] {
     const entries: NetscapeCookieEntry[] = [];
+    const cleaned = stripBom(text);
     const normalized =
-        text.includes("\\n") && !text.includes("\n") ? text.replace(/\\n/g, "\n") : text;
+        cleaned.includes("\\n") && !cleaned.includes("\n")
+            ? cleaned.replace(/\\n/g, "\n")
+            : cleaned;
     for (const rawLine of normalized.split(/\r?\n/u)) {
         const line = rawLine.trim();
-        if (!line || line.startsWith("#")) continue;
-        const cols = line.split("\t");
+        if (!line) continue;
+        const isHttpOnly = line.startsWith("#HttpOnly_");
+        if (line.startsWith("#") && !isHttpOnly) continue;
+        const effectiveLine = isHttpOnly ? line.slice("#HttpOnly_".length) : line;
+        const cols = effectiveLine.split("\t");
         if (cols.length < 7) continue;
+        const domain = (cols[0] ?? ".youtube.com").trim();
+        const name = cols[5] ?? "";
+        if (!domain || !name) continue;
         entries.push({
-            domain: cols[0] ?? ".youtube.com",
+            domain,
             includeSubdomains: (cols[1] ?? "TRUE").toUpperCase() === "TRUE",
             path: cols[2] ?? "/",
             secure: (cols[3] ?? "TRUE").toUpperCase() === "TRUE",
             expiration: Number.parseInt(cols[4] ?? "0", 10) || 0,
-            name: cols[5] ?? "",
+            name,
             value: cols.slice(6).join("\t"),
+            ...(isHttpOnly ? { httpOnly: true } : {}),
         });
     }
     return entries;
 }
 
+function parseCookieEditorJson(text: string): NetscapeCookieEntry[] {
+    const trimmed = stripBom(text).trim();
+    if (!trimmed.startsWith("[")) {
+        return [];
+    }
+    try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (!Array.isArray(parsed)) return [];
+        const entries: NetscapeCookieEntry[] = [];
+        for (const item of parsed) {
+            if (!item || typeof item !== "object") continue;
+            const rec = item as Record<string, unknown>;
+            const domain = typeof rec.domain === "string" ? rec.domain.trim() : "";
+            const name = typeof rec.name === "string" ? rec.name : "";
+            const value = typeof rec.value === "string" ? rec.value : "";
+            if (!domain || !name) continue;
+            const expRaw =
+                typeof rec.expirationDate === "number"
+                    ? rec.expirationDate
+                    : typeof rec.expires === "number"
+                      ? rec.expires
+                      : 0;
+            entries.push({
+                domain,
+                includeSubdomains: domain.startsWith("."),
+                path: typeof rec.path === "string" && rec.path ? rec.path : "/",
+                secure: rec.secure === true,
+                expiration: Number.isFinite(expRaw) && expRaw > 0 ? Math.floor(expRaw) : 0,
+                name,
+                value,
+                ...(rec.httpOnly === true ? { httpOnly: true } : {}),
+            });
+        }
+        return entries;
+    } catch {
+        return [];
+    }
+}
+
 /**
- * Parses Netscape cookies.txt content from plain text, single-line \n-escaped env vars,
- * or base64-encoded cookies.txt strings.
+ * Parses YouTube cookies from Netscape cookies.txt (including #HttpOnly_ lines,
+ * single-line \n-escaped env vars), Cookie-Editor JSON exports, or base64 blobs.
  */
 export function parseNetscapeCookieEntries(rawInput: string): NetscapeCookieEntry[] {
-    const direct = parseNetscapeLines(rawInput);
-    if (direct.length > 0) {
-        return direct;
+    const cleaned = stripBom(rawInput);
+    const jsonDirect = parseCookieEditorJson(cleaned);
+    if (jsonDirect.length > 0) {
+        return jsonDirect;
     }
 
-    const compact = rawInput.trim().replace(/\s+/gu, "");
+    const netscapeDirect = parseNetscapeLines(cleaned);
+    if (netscapeDirect.length > 0) {
+        return netscapeDirect;
+    }
+
+    const compact = cleaned.trim().replace(/\s+/gu, "");
     if (compact.length >= 16 && /^[A-Za-z0-9+/=]+$/u.test(compact)) {
         try {
-            const decoded = Buffer.from(compact, "base64").toString("utf8");
+            const decoded = stripBom(Buffer.from(compact, "base64").toString("utf8"));
+            const jsonDecoded = parseCookieEditorJson(decoded);
+            if (jsonDecoded.length > 0) {
+                return jsonDecoded;
+            }
             return parseNetscapeLines(decoded);
         } catch {
             return [];
