@@ -4,7 +4,11 @@ import {
     extractYouTubeVideoId,
     isHlsFormat,
     LyricsService,
+    listAudioFormatCandidates,
+    ProviderRegistry,
     SpotifyProvider,
+    YouTubeProvider,
+    type YtDlpClient,
 } from "@rawon/providers";
 import { ProviderError } from "@rawon/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -212,5 +216,233 @@ describe("Provider Query Classification, Spotify Resolution & Lyrics", () => {
                 ext: "webm",
             }),
         ).toBe(false);
+    });
+
+    it("ranks audio candidates cleanly, includes omitted-acodec HLS 234/233, excludes storyboards, and skips 403 URLs in YouTubeProvider", async () => {
+        const ranked = listAudioFormatCandidates({
+            id: "yt_403_test",
+            title: "Track",
+            formats: [
+                {
+                    format_id: "sb0",
+                    url: "https://i.ytimg.com/sb/abc/storyboard.mhtml",
+                    acodec: "none",
+                    vcodec: "none",
+                    ext: "mhtml",
+                    protocol: "mhtml",
+                },
+                {
+                    format_id: "139",
+                    url: "https://rr1.googlevideo.com/videoplayback?itag=139",
+                    acodec: "mp4a.40.5",
+                    vcodec: "none",
+                    abr: 48,
+                    asr: 22050,
+                    ext: "m4a",
+                    protocol: "https",
+                },
+                {
+                    format_id: "233",
+                    url: "https://manifest.googlevideo.com/api/manifest/hls_playlist/itag/233/file/index.m3u8",
+                    vcodec: "none",
+                    ext: "mp4",
+                    protocol: "m3u8_native",
+                },
+                {
+                    format_id: "234",
+                    url: "https://manifest.googlevideo.com/api/manifest/hls_playlist/itag/234/file/index.m3u8",
+                    vcodec: "none",
+                    ext: "mp4",
+                    protocol: "m3u8_native",
+                },
+                {
+                    format_id: "18",
+                    url: "https://rr1.googlevideo.com/videoplayback?itag=18",
+                    acodec: "mp4a.40.2",
+                    vcodec: "avc1.42001E",
+                    asr: 44100,
+                    ext: "mp4",
+                    protocol: "https",
+                },
+                {
+                    format_id: "251",
+                    url: "https://rr1.googlevideo.com/videoplayback?itag=251",
+                    acodec: "opus",
+                    vcodec: "none",
+                    abr: 130,
+                    asr: 48000,
+                    audio_channels: 2,
+                    ext: "webm",
+                    protocol: "https",
+                },
+            ],
+        });
+
+        expect(ranked.map((f) => f.format_id)).toEqual(["251", "234", "139", "233", "18"]);
+
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: string | URL) => {
+                const url = String(input);
+                if (url.includes("itag=251")) {
+                    return new Response("", { status: 403 });
+                }
+                if (url.includes("itag/234")) {
+                    return new Response(
+                        "#EXTM3U\n#EXTINF:5.0,\nhttps://seg.googlevideo.com/sq/0/itag/234\n",
+                        { status: 200 },
+                    );
+                }
+                if (url.includes("seg.googlevideo.com/sq/0/itag/234")) {
+                    return new Response(new Uint8Array([0, 1, 2, 3]), { status: 206 });
+                }
+                return new Response("", { status: 403 });
+            }),
+        );
+
+        const ytdlpStub = {
+            dumpJson: vi.fn(async () => ({
+                id: "yt_403_test",
+                title: "White Mustang",
+                duration: 165,
+                formats: ranked,
+            })),
+        } as unknown as YtDlpClient;
+
+        const yt = new YouTubeProvider(ytdlpStub);
+        const descriptor = await yt.getStreamDescriptor({
+            id: "yt_403_test",
+            title: "White Mustang",
+            url: "https://www.youtube.com/watch?v=yt_403_test",
+            duration: 165,
+            thumbnail: "",
+            author: "Lana Del Rey",
+            provider: "youtube",
+        });
+
+        expect(descriptor.url).toContain("itag/234");
+        expect(descriptor.directPassthroughEligible).toBe(false);
+        expect(descriptor.bitrateBps).toBe(132_000);
+    });
+
+    it("falls back to alternate YouTube clients when all default formats 403, and forceFallbackProvider switches to SoundCloud", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: string | URL) => {
+                const url = String(input);
+                if (url.includes("android_client_ok")) {
+                    return new Response(new Uint8Array([1, 2, 3]), { status: 206 });
+                }
+                if (url.includes("cf-media.sndcdn.com/full.mp3")) {
+                    return new Response(new Uint8Array([4, 5, 6]), { status: 206 });
+                }
+                return new Response("", { status: 403 });
+            }),
+        );
+
+        const dumpJson = vi.fn(async (target: string, opts?: { extractorArgs?: string }) => {
+            if (target.startsWith("scsearch")) {
+                return {
+                    entries: [
+                        {
+                            id: "sc_short",
+                            title: "Summertime Sadness Preview",
+                            url: "https://soundcloud.com/artist/preview",
+                            webpage_url: "https://soundcloud.com/artist/preview",
+                            duration: 30,
+                            uploader: "Lana Del Rey",
+                        },
+                        {
+                            id: "sc_full",
+                            title: "Summertime Sadness",
+                            url: "https://soundcloud.com/artist/summertime-sadness",
+                            webpage_url: "https://soundcloud.com/artist/summertime-sadness",
+                            duration: 265,
+                            uploader: "Lana Del Rey",
+                        },
+                    ],
+                };
+            }
+            if (target.includes("soundcloud.com")) {
+                return {
+                    id: "sc_full",
+                    title: "Summertime Sadness",
+                    webpage_url: "https://soundcloud.com/artist/summertime-sadness",
+                    duration: 265,
+                    uploader: "Lana Del Rey",
+                    formats: [
+                        {
+                            format_id: "http_mp3",
+                            url: "https://cf-media.sndcdn.com/full.mp3",
+                            acodec: "mp3",
+                            vcodec: "none",
+                            abr: 128,
+                            ext: "mp3",
+                            protocol: "https",
+                        },
+                    ],
+                };
+            }
+            if (!opts?.extractorArgs) {
+                return {
+                    id: "yt_vid",
+                    title: "Summertime Sadness",
+                    duration: 265,
+                    formats: [
+                        {
+                            format_id: "251",
+                            url: "https://rr1.googlevideo.com/videoplayback?itag=251",
+                            acodec: "opus",
+                            vcodec: "none",
+                            abr: 130,
+                            protocol: "https",
+                        },
+                    ],
+                };
+            }
+            if (opts.extractorArgs === "youtube:player_client=android") {
+                return {
+                    id: "yt_vid",
+                    title: "Summertime Sadness",
+                    duration: 265,
+                    formats: [
+                        {
+                            format_id: "18",
+                            url: "https://rr2.googlevideo.com/videoplayback?android_client_ok=1",
+                            acodec: "mp4a.40.2",
+                            vcodec: "avc1.42001E",
+                            ext: "mp4",
+                            asr: 44100,
+                            protocol: "https",
+                        },
+                    ],
+                };
+            }
+            return { id: "yt_vid", title: "Summertime Sadness", formats: [] };
+        });
+
+        const ytdlpStub = { dumpJson } as unknown as YtDlpClient;
+        const registry = new ProviderRegistry({ ytdlp: ytdlpStub });
+
+        const ytTrack = {
+            id: "yt_vid",
+            title: "Summertime Sadness",
+            url: "https://www.youtube.com/watch?v=yt_vid",
+            duration: 265,
+            thumbnail: "",
+            author: "Lana Del Rey",
+            provider: "youtube" as const,
+        };
+
+        const androidDesc = await registry.getStreamDescriptor(ytTrack);
+        expect(androidDesc.url).toContain("android_client_ok");
+
+        // When runtime retries exhaust primary reliability, forceFallbackProvider switches cleanly to full SoundCloud track
+        const fallbackDesc = await registry.getStreamDescriptor(ytTrack, {
+            allowFallbackProvider: true,
+            forceFallbackProvider: true,
+        });
+        expect(fallbackDesc.canonicalKey).toContain("soundcloud:");
+        expect(fallbackDesc.url).toContain("cf-media.sndcdn.com/full.mp3");
     });
 });

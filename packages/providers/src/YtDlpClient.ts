@@ -507,30 +507,108 @@ export class YtDlpClient {
     }
 }
 
-export function isHlsFormat(fmt: { url?: string; protocol?: string } | null | undefined): boolean {
+export function isHlsFormat(
+    fmt: { url?: string; protocol?: string; ext?: string } | null | undefined,
+): boolean {
     if (!fmt) return false;
     const proto = fmt.protocol?.toLowerCase() ?? "";
     const url = fmt.url?.toLowerCase() ?? "";
-    return proto.includes("m3u8") || url.includes(".m3u8");
+    const ext = fmt.ext?.toLowerCase() ?? "";
+    return proto.includes("m3u8") || url.includes(".m3u8") || ext === "m3u8";
 }
 
-export function extractBestAudioFormat(
-    entry: YtDlpEntry | null | undefined,
-): YtDlpFormatEntry | null {
-    if (!entry || typeof entry !== "object") {
-        return null;
+function isPlayableAudioCandidate(
+    fmt: YtDlpFormatEntry | null | undefined,
+): fmt is YtDlpFormatEntry {
+    if (!fmt || typeof fmt !== "object" || !fmt.url) {
+        return false;
+    }
+    const ext = fmt.ext?.toLowerCase() ?? "";
+    const proto = fmt.protocol?.toLowerCase() ?? "";
+    const formatId = fmt.format_id?.toLowerCase() ?? "";
+    if (ext === "mhtml" || proto === "mhtml" || formatId.startsWith("sb")) {
+        return false;
     }
 
-    const url = entry.url;
-    if (
-        url &&
-        entry.vcodec === "none" &&
-        entry.acodec &&
-        entry.acodec !== "none" &&
-        !isHlsFormat({ url })
-    ) {
-        return {
-            url,
+    const acodec = fmt.acodec?.toLowerCase();
+    const vcodec = fmt.vcodec?.toLowerCase();
+    if (acodec === "none") {
+        return false;
+    }
+
+    const isAudioOnly = !vcodec || vcodec === "none";
+    if (isAudioOnly) {
+        // Accept explicit audio formats AND HLS audio-only manifests where yt-dlp omits acodec (e.g. YouTube itag 233/234)
+        return Boolean(acodec) || isHlsFormat(fmt);
+    }
+
+    // Muxed audio+video fallback (e.g. YouTube android/tv_simply format 18) must explicitly declare an audio codec
+    return Boolean(acodec);
+}
+
+function estimateFormatAudioKbps(fmt: YtDlpFormatEntry): number {
+    if (typeof fmt.abr === "number" && Number.isFinite(fmt.abr) && fmt.abr > 0) {
+        return fmt.abr;
+    }
+    const isAudioOnly = !fmt.vcodec || fmt.vcodec.toLowerCase() === "none";
+    if (isAudioOnly && typeof fmt.tbr === "number" && Number.isFinite(fmt.tbr) && fmt.tbr > 0) {
+        return fmt.tbr;
+    }
+    switch (fmt.format_id) {
+        case "234":
+            return 132;
+        case "251":
+        case "140":
+        case "141":
+            return 128;
+        case "250":
+            return 68;
+        case "249":
+        case "233":
+            return 50;
+        case "139":
+            return 48;
+        default:
+            return 0;
+    }
+}
+
+function getFormatQualityTier(fmt: YtDlpFormatEntry): number {
+    const isMuxed = Boolean(fmt.vcodec && fmt.vcodec.toLowerCase() !== "none");
+    if (isMuxed) {
+        return 0;
+    }
+    const hls = isHlsFormat(fmt);
+    const kbps = estimateFormatAudioKbps(fmt);
+    if (!hls) {
+        // Tier 4: progressive direct high-bitrate / unspecified bitrate (e.g. 251, 140); Tier 2: low-bitrate progressive (e.g. 250, 249, 139)
+        return kbps === 0 || kbps >= 96 ? 4 : 2;
+    }
+    // Tier 3: high-bitrate HLS audio-only (e.g. YouTube 234 132k AAC-LC); Tier 1: low-bitrate HLS audio-only (e.g. 233)
+    return kbps >= 96 ? 3 : 1;
+}
+
+/**
+ * Returns all playable audio format candidates from a yt-dlp entry ordered from
+ * highest practical audio fidelity & lowest overhead down to fallback formats.
+ */
+export function listAudioFormatCandidates(
+    entry: YtDlpEntry | null | undefined,
+): YtDlpFormatEntry[] {
+    if (!entry || typeof entry !== "object") {
+        return [];
+    }
+
+    const byUrl = new Map<string, YtDlpFormatEntry>();
+    for (const f of [...(entry.requested_formats ?? []), ...(entry.formats ?? [])]) {
+        if (isPlayableAudioCandidate(f) && f.url && !byUrl.has(f.url)) {
+            byUrl.set(f.url, f);
+        }
+    }
+
+    if (entry.url && !byUrl.has(entry.url)) {
+        const topLevel: YtDlpFormatEntry = {
+            url: entry.url,
             ext: entry.ext,
             acodec: entry.acodec,
             vcodec: entry.vcodec,
@@ -539,30 +617,21 @@ export function extractBestAudioFormat(
             abr: entry.abr,
             http_headers: entry.http_headers,
         };
+        if (
+            isPlayableAudioCandidate(topLevel) ||
+            (byUrl.size === 0 &&
+                entry.ext?.toLowerCase() !== "mhtml" &&
+                entry.acodec?.toLowerCase() !== "none")
+        ) {
+            byUrl.set(entry.url, topLevel);
+        }
     }
 
-    const rawCandidates = [...(entry.requested_formats ?? []), ...(entry.formats ?? [])];
-    const candidates = rawCandidates.filter(
-        (f): f is YtDlpFormatEntry =>
-            Boolean(f && typeof f === "object" && f.url && f.acodec && f.acodec !== "none") &&
-            (!f.vcodec || f.vcodec === "none"),
-    );
-
-    if (candidates.length === 0) {
-        return url
-            ? {
-                  url,
-                  ext: entry.ext,
-                  acodec: entry.acodec,
-                  asr: entry.asr,
-                  audio_channels: entry.audio_channels,
-                  abr: entry.abr,
-                  http_headers: entry.http_headers,
-              }
-            : null;
-    }
-
+    const candidates = [...byUrl.values()];
     candidates.sort((a, b) => {
+        const tierDiff = getFormatQualityTier(b) - getFormatQualityTier(a);
+        if (tierDiff !== 0) return tierDiff;
+
         // Strongly prefer progressive direct HTTP streams over segmented HLS (.m3u8) playlists
         const aDirect = isHlsFormat(a) ? 0 : 1;
         const bDirect = isHlsFormat(b) ? 0 : 1;
@@ -575,10 +644,19 @@ export function extractBestAudioFormat(
             b.acodec?.toLowerCase().includes("opus") && (!b.asr || b.asr === 48_000) ? 1 : 0;
         if (aOpus !== bOpus) return bOpus - aOpus;
 
-        return (b.abr ?? b.tbr ?? 0) - (a.abr ?? a.tbr ?? 0);
+        const kbpsDiff = estimateFormatAudioKbps(b) - estimateFormatAudioKbps(a);
+        if (kbpsDiff !== 0) return kbpsDiff;
+
+        return (b.asr ?? 0) - (a.asr ?? 0);
     });
 
-    return candidates[0] ?? null;
+    return candidates;
+}
+
+export function extractBestAudioFormat(
+    entry: YtDlpEntry | null | undefined,
+): YtDlpFormatEntry | null {
+    return listAudioFormatCandidates(entry)[0] ?? null;
 }
 
 export { readFileSync };

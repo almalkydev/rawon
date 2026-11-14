@@ -966,9 +966,10 @@ export class GuildMusicSession extends EventEmitter {
             );
 
             try {
-                // Force fresh descriptor with provider fallback on retry
+                // Force fresh descriptor with provider fallback on retry (and bypass primary if retry #1 still failed)
                 const freshDesc = await this.providers.getStreamDescriptor(queued.track, {
                     allowFallbackProvider: true,
+                    forceFallbackProvider: this.recoveryAttemptsForTrack >= 2,
                 });
                 this.activeDescriptorCache.set(canonicalKey, freshDesc);
                 await this.startCurrentTrack(lastPositionSeconds);

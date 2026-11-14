@@ -164,7 +164,7 @@ export class MultiBotSupervisor {
             }
         });
 
-        // Sync Request Channel persistent player UI whenever ANY music session updates
+        // Sync Request Channel persistent player UI and surface terminal playback errors
         this.sessions.on(
             "sessionCreated",
             (session: import("@rawon/music-core").GuildMusicSession) => {
@@ -184,6 +184,59 @@ export class MultiBotSupervisor {
                             botSettings: bs,
                             t: this.i18n.scoped(loc),
                         });
+                    })();
+                });
+
+                session.on("notice", (notice) => {
+                    if (notice.level !== "error" || !session.textChannelId) return;
+                    const rt = this.runtimes.find((r) => r.botId === session.botId);
+                    if (!rt) return;
+                    void (async () => {
+                        try {
+                            const [bs, gCfg, rcCfg, channel] = await Promise.all([
+                                this.store.getBotSettings(),
+                                this.store.getGuildConfig(session.guildId),
+                                this.store.getRequestChannel(session.guildId, session.botId),
+                                rt.client.channels.fetch(session.textChannelId).catch(() => null),
+                            ]);
+                            if (!channel?.isTextBased() || !("send" in channel)) return;
+
+                            const loc = this.i18n.resolveLocale(
+                                gCfg.locale,
+                                this.config.defaultLocale,
+                            );
+                            const t = this.i18n.scoped(loc);
+                            const safeParams: Record<string, string | number | undefined> = {};
+                            for (const [k, v] of Object.entries(notice.params ?? {})) {
+                                if (typeof v === "string") {
+                                    safeParams[k] = redactSensitiveText(
+                                        v,
+                                        this.config.discordTokens,
+                                    ).slice(0, 240);
+                                } else if (typeof v === "number") {
+                                    safeParams[k] = v;
+                                } else if (typeof v === "boolean") {
+                                    safeParams[k] = String(v);
+                                }
+                            }
+
+                            const msg = await channel.send(
+                                buildNoticeContainer({
+                                    colorHex: bs.embedColor,
+                                    description: `${bs.noEmoji} ${t(notice.key, safeParams)}`,
+                                }) as never,
+                            );
+                            if (rcCfg?.channelId === session.textChannelId) {
+                                setTimeout(() => {
+                                    void msg.delete().catch(() => undefined);
+                                }, 12_000).unref?.();
+                            }
+                        } catch (err) {
+                            this.logger.debug(
+                                { err, guildId: session.guildId, code: notice.code },
+                                "Failed to dispatch session error notice",
+                            );
+                        }
                     })();
                 });
             },

@@ -175,19 +175,28 @@ export class ProviderRegistry {
 
     public async getStreamDescriptor(
         track: Track,
-        options: { allowFallbackProvider?: boolean; signal?: AbortSignal } = {},
+        options: {
+            allowFallbackProvider?: boolean;
+            forceFallbackProvider?: boolean;
+            signal?: AbortSignal;
+        } = {},
     ): Promise<StreamDescriptor> {
         const providerKey = track.provider;
 
+        if (options.forceFallbackProvider && options.allowFallbackProvider !== false) {
+            return this.resolveFallbackStreamDescriptor(
+                track,
+                new ProviderError(
+                    `Skipping ${providerKey} primary stream resolution after retry failure`,
+                    "expired_stream",
+                    true,
+                ),
+                options.signal,
+            );
+        }
+
         try {
-            let desc: StreamDescriptor;
-            if (track.provider === "direct" || track.provider === "attachment") {
-                desc = await this.directHttp.getStreamDescriptor(track, options.signal);
-            } else if (track.provider === "soundcloud") {
-                desc = await this.soundcloud.getStreamDescriptor(track, options.signal);
-            } else {
-                desc = await this.youtube.getStreamDescriptor(track, options.signal);
-            }
+            const desc = await this.resolvePrimaryStreamDescriptor(track, options.signal);
             this.failureCounts.set(providerKey, 0);
             return desc;
         } catch (primaryErr) {
@@ -203,34 +212,54 @@ export class ProviderRegistry {
                 throw primaryErr;
             }
 
-            // Fallback: try re-searching by title/artist on alternative provider
-            const fallbackQuery = [track.author, track.title].filter(Boolean).join(" ").trim();
-            if (!fallbackQuery) {
-                throw primaryErr;
-            }
-
-            const targetAlt = track.provider === "soundcloud" ? "youtube" : "soundcloud";
-            this.logger?.warn(
-                { err: primaryErr, track: track.title, targetAlt },
-                "Primary stream resolution failed; trying fallback provider",
-            );
-
-            const altSearch = await this.search(fallbackQuery, targetAlt, 5, "direct").catch(
-                () => null,
-            );
-            // When falling back to SoundCloud, skip 30-second Go+ preview snippets if a full-length track exists
-            const candidate =
-                (targetAlt === "soundcloud"
-                    ? altSearch?.items.find((item) => item.duration === 0 || item.duration > 35)
-                    : undefined) ?? altSearch?.items[0];
-            if (!candidate) {
-                throw primaryErr;
-            }
-
-            return targetAlt === "soundcloud"
-                ? this.soundcloud.getStreamDescriptor(candidate, options.signal)
-                : this.youtube.getStreamDescriptor(candidate, options.signal);
+            return this.resolveFallbackStreamDescriptor(track, primaryErr, options.signal);
         }
+    }
+
+    private async resolvePrimaryStreamDescriptor(
+        track: Track,
+        signal?: AbortSignal,
+    ): Promise<StreamDescriptor> {
+        if (track.provider === "direct" || track.provider === "attachment") {
+            return this.directHttp.getStreamDescriptor(track, signal);
+        }
+        if (track.provider === "soundcloud") {
+            return this.soundcloud.getStreamDescriptor(track, signal);
+        }
+        return this.youtube.getStreamDescriptor(track, signal);
+    }
+
+    private async resolveFallbackStreamDescriptor(
+        track: Track,
+        primaryErr: unknown,
+        signal?: AbortSignal,
+    ): Promise<StreamDescriptor> {
+        const fallbackQuery = [track.author, track.title].filter(Boolean).join(" ").trim();
+        if (!fallbackQuery) {
+            throw primaryErr;
+        }
+
+        const targetAlt = track.provider === "soundcloud" ? "youtube" : "soundcloud";
+        this.logger?.warn(
+            { err: primaryErr, track: track.title, targetAlt },
+            "Primary stream resolution failed; trying fallback provider",
+        );
+
+        const altSearch = await this.search(fallbackQuery, targetAlt, 5, "direct").catch(
+            () => null,
+        );
+        // When falling back to SoundCloud, skip 30-second Go+ preview snippets if a full-length track exists
+        const candidate =
+            (targetAlt === "soundcloud"
+                ? altSearch?.items.find((item) => item.duration === 0 || item.duration > 35)
+                : undefined) ?? altSearch?.items[0];
+        if (!candidate) {
+            throw primaryErr;
+        }
+
+        return targetAlt === "soundcloud"
+            ? this.soundcloud.getStreamDescriptor(candidate, signal)
+            : this.youtube.getStreamDescriptor(candidate, signal);
     }
 
     public async findRelatedTracks(

@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { createReadStream, mkdtempSync, rmSync } from "node:fs";
+import { createReadStream, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AudioPipeline, ProcessSupervisor } from "@rawon/audio-engine";
-import type { StreamDescriptor } from "@rawon/shared";
+import { AudioEngineError, type StreamDescriptor } from "@rawon/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 let workDir = "";
@@ -355,6 +355,36 @@ describe("AudioPipeline End-to-End with FFmpeg & Opus", () => {
         await prepared.cleanup();
 
         await new Promise((r) => setTimeout(r, 80));
+        expect(supervisor.getActiveCount()).toBe(0);
+    });
+
+    it("emits an error instead of silent EOF when FFmpeg exits non-zero on non-403 decode failure", async () => {
+        const supervisor = new ProcessSupervisor();
+        const pipeline = new AudioPipeline({ supervisor });
+        const corruptPath = join(workDir, "corrupt_input.ogg");
+        writeFileSync(corruptPath, "not-valid-ogg-or-media-bytes");
+
+        const prepared = await pipeline.preparePlaybackStream({
+            descriptor: {
+                sourceType: "cache",
+                url: "https://example.com/corrupt.ogg",
+                canonicalKey: "test:corrupt",
+                container: "ogg",
+                codec: "opus",
+                sampleRate: 48_000,
+                channels: 2,
+                durationSeconds: 10,
+                isLive: false,
+                seekable: true,
+                directPassthroughEligible: false,
+                cacheFilePath: corruptPath,
+                resolvedAt: Date.now(),
+            },
+            normalizeAudio: true,
+        });
+
+        await expect(collectChunks(prepared.stream)).rejects.toThrow(AudioEngineError);
+        await prepared.cleanup();
         expect(supervisor.getActiveCount()).toBe(0);
     });
 });

@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import { PassThrough, type Readable } from "node:stream";
 import {
+    AudioEngineError,
     type AudioFiltersState,
     type AudioQualityProfile,
     type EqualizerBand,
@@ -335,16 +336,12 @@ export class AudioPipeline {
             const volumeTransform = new SmoothVolumeTransform({
                 initialVolumePercent: params.volumePercent,
             });
-            handle.stdout.on("error", (err) => {
-                if (!volumeTransform.destroyed) volumeTransform.destroy(err);
+            const cleanup = this.wireFfmpegTarget({
+                handle,
+                target: volumeTransform,
+                pipeStream: params.pipeStream,
+                signal: params.signal,
             });
-            handle.stdout.pipe(volumeTransform);
-
-            const cleanup = async () => {
-                if (!volumeTransform.destroyed) volumeTransform.destroy();
-                if (params.pipeStream && !params.pipeStream.destroyed) params.pipeStream.destroy();
-                await handle.kill();
-            };
 
             return {
                 mode: "ffmpeg-pcm-inline",
@@ -359,34 +356,13 @@ export class AudioPipeline {
 
         const demuxer = new prism.opus.OggDemuxer();
         const bufferedStream = bufferOpusPackets(demuxer);
-        handle.stdout.on("error", (err) => {
-            if (!demuxer.destroyed) demuxer.destroy(err);
+        const cleanup = this.wireFfmpegTarget({
+            handle,
+            target: demuxer,
+            extraCleanupTargets: [bufferedStream],
+            pipeStream: params.pipeStream,
+            signal: params.signal,
         });
-        handle.child.once("close", (code) => {
-            if (code !== 0 && code !== null && !params.signal?.aborted) {
-                const stderr = handle.getStderr().trim();
-                this.logger?.debug({ code, stderr }, "FFmpeg pipeline terminated abnormally");
-                if (
-                    (stderr.includes("403") ||
-                        stderr.includes("404") ||
-                        stderr.includes("410") ||
-                        stderr.includes("Server returned 4")) &&
-                    !demuxer.destroyed
-                ) {
-                    demuxer.destroy(
-                        new ExpiredStreamError(`FFmpeg stream expired/denied: ${stderr}`, 403),
-                    );
-                }
-            }
-        });
-        handle.stdout.pipe(demuxer);
-
-        const cleanup = async () => {
-            if (!bufferedStream.destroyed) bufferedStream.destroy();
-            if (!demuxer.destroyed) demuxer.destroy();
-            if (params.pipeStream && !params.pipeStream.destroyed) params.pipeStream.destroy();
-            await handle.kill();
-        };
 
         return {
             mode: params.copyOpus ? "ffmpeg-copy-ogg-opus" : "ffmpeg-ogg-opus",
@@ -395,6 +371,94 @@ export class AudioPipeline {
             probe: params.probe,
             processId: handle.id,
             cleanup,
+        };
+    }
+
+    private wireFfmpegTarget(params: {
+        handle: {
+            stdout: Readable;
+            child: { once: (event: "close", listener: (code: number | null) => void) => unknown };
+            getStderr: () => string;
+            kill: () => Promise<void>;
+        };
+        target: NodeJS.WritableStream & {
+            destroyed: boolean;
+            destroy: (error?: Error) => unknown;
+            end: () => unknown;
+        };
+        extraCleanupTargets?: Array<{ destroyed: boolean; destroy: (error?: Error) => unknown }>;
+        pipeStream?: Readable;
+        signal?: AbortSignal;
+    }): () => Promise<void> {
+        const { handle, target } = params;
+        let cleanedUp = false;
+        let stdoutEnded = false;
+        let exitCode: number | null | undefined;
+
+        const maybeEndCleanly = () => {
+            if (!cleanedUp && stdoutEnded && exitCode === 0 && !target.destroyed) {
+                target.end();
+            }
+        };
+
+        handle.stdout.on("error", (err) => {
+            if (!cleanedUp && !target.destroyed) {
+                target.destroy(err);
+            }
+        });
+
+        handle.stdout.once("end", () => {
+            stdoutEnded = true;
+            maybeEndCleanly();
+        });
+
+        handle.child.once("close", (code) => {
+            exitCode = code;
+            if (cleanedUp || target.destroyed) {
+                return;
+            }
+            if (params.signal?.aborted) {
+                if (!target.destroyed) target.end();
+                return;
+            }
+            if (code !== 0) {
+                const stderr = handle.getStderr().trim();
+                this.logger?.debug({ code, stderr }, "FFmpeg pipeline terminated abnormally");
+                const isExpired =
+                    stderr.includes("401") ||
+                    stderr.includes("403") ||
+                    stderr.includes("404") ||
+                    stderr.includes("410") ||
+                    stderr.includes("Server returned 4") ||
+                    stderr.includes("HTTP error 4");
+                const err = isExpired
+                    ? new ExpiredStreamError(`FFmpeg stream expired/denied: ${stderr}`, 403)
+                    : new AudioEngineError(
+                          `FFmpeg pipeline exited abnormally (code ${code ?? "signal"})${
+                              stderr ? `: ${stderr.slice(0, 300)}` : ""
+                          }`,
+                          true,
+                      );
+                if (!target.destroyed) {
+                    target.destroy(err);
+                }
+                return;
+            }
+            maybeEndCleanly();
+        });
+
+        // Hold target open with { end: false } until FFmpeg process exit code is verified as 0
+        handle.stdout.pipe(target, { end: false });
+
+        return async () => {
+            cleanedUp = true;
+            handle.stdout.unpipe(target);
+            for (const extra of params.extraCleanupTargets ?? []) {
+                if (!extra.destroyed) extra.destroy();
+            }
+            if (!target.destroyed) target.destroy();
+            if (params.pipeStream && !params.pipeStream.destroyed) params.pipeStream.destroy();
+            await handle.kill();
         };
     }
 }

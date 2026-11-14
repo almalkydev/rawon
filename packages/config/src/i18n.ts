@@ -79,6 +79,11 @@ const V2_ADDITIONS_EN: JsonObject = {
         invalidVolumeModal: "Please enter a valid number between 1 and 200.",
         partialFailure: "Some items could not be resolved: {failed}",
     },
+    music: {
+        recoveringStream: "Stream interrupted for **{title}**; recovering (attempt {attempt})...",
+        trackLoadFailed: "Could not play **{title}**: {reason}",
+        emptyVcLeaving: "Voice channel is empty; pausing and leaving soon if nobody rejoins.",
+    },
 };
 
 function isPlainObject(value: unknown): value is JsonObject {
