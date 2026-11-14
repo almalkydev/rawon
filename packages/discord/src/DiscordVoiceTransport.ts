@@ -37,7 +37,7 @@ export class DiscordVoiceTransport implements VoiceTransport {
         this.player = createAudioPlayer({
             behaviors: {
                 noSubscriber: NoSubscriberBehavior.Pause,
-                maxMissedFrames: 25,
+                maxMissedFrames: 250,
             },
         });
 
@@ -99,6 +99,10 @@ export class DiscordVoiceTransport implements VoiceTransport {
             }
         });
 
+        connection.on("error", (err) => {
+            this.logger?.warn({ err, guildId, channelId }, "Voice connection error");
+        });
+
         connection.on(VoiceConnectionStatus.Destroyed, () => {
             if (this.connection === connection) {
                 this.connection = null;
@@ -131,7 +135,26 @@ export class DiscordVoiceTransport implements VoiceTransport {
     ): Promise<void> {
         const token = ++this.activePlaybackToken;
         this.activeFinishCallback = null;
+
+        let earlyStreamError: Error | null = null;
+        const onEarlyStreamError = (err: Error) => {
+            earlyStreamError = err;
+        };
+        prepared.stream.on("error", onEarlyStreamError);
+
         await this.cleanupPrepared();
+
+        if (token !== this.activePlaybackToken) {
+            prepared.stream.off("error", onEarlyStreamError);
+            await prepared.cleanup().catch(() => undefined);
+            return;
+        }
+        if (earlyStreamError) {
+            prepared.stream.off("error", onEarlyStreamError);
+            await prepared.cleanup().catch(() => undefined);
+            onFinished("error", earlyStreamError);
+            return;
+        }
 
         this.currentPrepared = prepared;
         const inputType =
@@ -140,7 +163,9 @@ export class DiscordVoiceTransport implements VoiceTransport {
         const resource = createAudioResource(prepared.stream, {
             inputType,
             inlineVolume: inputType === StreamType.Raw && !prepared.volumeTransform,
+            silencePaddingFrames: 5,
         });
+        prepared.stream.off("error", onEarlyStreamError);
 
         this.activeFinishCallback = (reason, err) => {
             if (token !== this.activePlaybackToken) return;

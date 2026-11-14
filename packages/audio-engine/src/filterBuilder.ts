@@ -143,6 +143,7 @@ export interface BuildFfmpegArgsOptions {
     inputHeaders?: Record<string, string>;
     seekSeconds?: number;
     outputMode: "ogg-opus" | "s16le-pcm";
+    copyOpus?: boolean;
     qualityProfile?: AudioQualityProfile;
     filters?: AudioFiltersState;
     equalizer?: readonly EqualizerBand[];
@@ -152,10 +153,28 @@ export interface BuildFfmpegArgsOptions {
 }
 
 export function buildFfmpegArgs(options: BuildFfmpegArgsOptions): string[] {
-    const args: string[] = ["-hide_banner", "-loglevel", "error", "-nostdin"];
+    const args: string[] = [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-fflags",
+        "+discardcorrupt",
+    ];
 
     if (options.isHttpInput) {
-        args.push("-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5");
+        args.push(
+            "-reconnect",
+            "1",
+            "-reconnect_streamed",
+            "1",
+            "-reconnect_on_network_error",
+            "1",
+            "-reconnect_delay_max",
+            "5",
+            "-rw_timeout",
+            "15000000",
+        );
         if (options.inputHeaders && Object.keys(options.inputHeaders).length > 0) {
             const headerLines = Object.entries(options.inputHeaders)
                 .map(([k, v]) => `${k}: ${v}`)
@@ -171,16 +190,21 @@ export function buildFfmpegArgs(options: BuildFfmpegArgsOptions): string[] {
 
     args.push("-i", options.inputSource, "-vn", "-sn", "-dn");
 
+    if (options.copyOpus && options.outputMode === "ogg-opus") {
+        args.push("-c:a", "copy", "-flush_packets", "1", "-f", "ogg", "pipe:1");
+        return args;
+    }
+
     const filterChain = buildFilterChain({
         filters: options.filters,
         equalizer: options.equalizer,
         normalizeAudio: options.normalizeAudio,
         volumePercent: options.volumePercent,
     });
+    // High-precision Kaiser windowed resampler guarantees clean 44.1kHz -> 48kHz conversion without aliasing or crackles
+    filterChain.push("aresample=48000:filter_type=kaiser:filter_size=64");
 
-    if (filterChain.length > 0) {
-        args.push("-af", filterChain.join(","));
-    }
+    args.push("-af", filterChain.join(","));
 
     // Discord requires 48 kHz 2-channel stereo
     args.push("-ar", "48000", "-ac", "2");
@@ -200,6 +224,8 @@ export function buildFfmpegArgs(options: BuildFfmpegArgsOptions): string[] {
             "audio",
             "-frame_duration",
             String(profile.frameDurationMs),
+            "-flush_packets",
+            "1",
             "-f",
             "ogg",
             "pipe:1",

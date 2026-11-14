@@ -1,7 +1,6 @@
 import { createReadStream } from "node:fs";
-import type { Readable } from "node:stream";
+import { PassThrough, type Readable } from "node:stream";
 import {
-    AudioEngineError,
     type AudioFiltersState,
     type AudioQualityProfile,
     type EqualizerBand,
@@ -18,8 +17,23 @@ import { SmoothVolumeTransform } from "./SmoothVolumeTransform.js";
 export type PipelineMode =
     | "passthrough-webm-opus"
     | "passthrough-ogg-opus"
+    | "ffmpeg-copy-ogg-opus"
     | "ffmpeg-ogg-opus"
     | "ffmpeg-pcm-inline";
+
+const OPUS_JITTER_BUFFER_PACKETS = 150; // ~3.0 seconds of 20ms Opus frames to absorb network/GC jitter
+
+function bufferOpusPackets(demuxer: Readable): PassThrough {
+    const jitterBuffer = new PassThrough({
+        objectMode: true,
+        highWaterMark: OPUS_JITTER_BUFFER_PACKETS,
+    });
+    demuxer.on("error", (err) => {
+        if (!jitterBuffer.destroyed) jitterBuffer.destroy(err);
+    });
+    demuxer.pipe(jitterBuffer);
+    return jitterBuffer;
+}
 
 export type AudioOutputEncoding = "opus-packets" | "s16le-pcm";
 
@@ -128,6 +142,7 @@ export class AudioPipeline {
                     probe.container === "webm"
                         ? new prism.opus.WebmDemuxer()
                         : new prism.opus.OggDemuxer();
+                const bufferedStream = bufferOpusPackets(demuxer);
 
                 peekedStream.on("error", (err) => {
                     if (!demuxer.destroyed) demuxer.destroy(err);
@@ -135,6 +150,7 @@ export class AudioPipeline {
                 peekedStream.pipe(demuxer);
 
                 const cleanup = async () => {
+                    if (!bufferedStream.destroyed) bufferedStream.destroy();
                     if (!demuxer.destroyed) demuxer.destroy();
                     if (!peekedStream.destroyed) peekedStream.destroy();
                     if (!rawStream.destroyed) rawStream.destroy();
@@ -153,7 +169,7 @@ export class AudioPipeline {
                 return {
                     mode,
                     outputEncoding: "opus-packets",
-                    stream: demuxer,
+                    stream: bufferedStream,
                     probe,
                     cleanup,
                 };
@@ -197,11 +213,14 @@ export class AudioPipeline {
 
         // 2. Direct / Remote HTTP stream
         const isHttp = /^https?:\/\//iu.test(descriptor.url);
+        const isHls = descriptor.url.toLowerCase().includes(".m3u8");
         const hintProbe = inspectHeaderBytes(Buffer.alloc(0), descriptor);
 
-        // Try HTTP passthrough directly when source metadata confirms stereo 48k Opus in WebM/Ogg
+        // Lossless HTTP Opus passthrough with FFmpeg HTTP reconnect + zero re-encoding
         if (
             isHttp &&
+            !isHls &&
+            !descriptor.isLive &&
             canUseOpusPassthrough({
                 probe: {
                     container:
@@ -223,96 +242,25 @@ export class AudioPipeline {
                 enableRealtimeVolumeTransform: useInlinePcm,
             })
         ) {
-            const fetchController = new AbortController();
-            const combinedSignal = request.signal
-                ? AbortSignal.any([request.signal, fetchController.signal])
-                : fetchController.signal;
-
-            const response = await fetch(descriptor.url, {
-                method: "GET",
-                headers: descriptor.headers,
-                signal: combinedSignal,
-            });
-
-            if (
-                response.status === 401 ||
-                response.status === 403 ||
-                response.status === 404 ||
-                response.status === 410
-            ) {
-                throw new ExpiredStreamError(
-                    `Remote audio stream expired or denied (HTTP ${response.status})`,
-                    response.status,
-                );
-            }
-            if (!response.ok || !response.body) {
-                throw new AudioEngineError(
-                    `HTTP stream returned status ${response.status}`,
-                    response.status >= 500,
-                );
-            }
-
-            const { Readable: NodeReadable } = await import("node:stream");
-            const nodeStream = NodeReadable.fromWeb(
-                response.body as import("node:stream/web").ReadableStream<Uint8Array>,
-            );
-
-            const { probe, stream: verifiedStream } = await peekStreamAndProbe(
-                nodeStream,
-                descriptor,
-            );
-            if (
-                canUseOpusPassthrough({
-                    probe,
-                    seekSeconds,
-                    volumePercent,
-                    filters: request.filters,
-                    equalizer: request.equalizer,
-                    normalizeAudio: request.normalizeAudio,
-                    enableRealtimeVolumeTransform: useInlinePcm,
-                })
-            ) {
-                const mode: PipelineMode =
-                    probe.container === "webm" ? "passthrough-webm-opus" : "passthrough-ogg-opus";
-                const demuxer =
-                    probe.container === "webm"
-                        ? new prism.opus.WebmDemuxer()
-                        : new prism.opus.OggDemuxer();
-
-                verifiedStream.on("error", (err) => {
-                    if (!demuxer.destroyed) demuxer.destroy(err);
-                });
-                verifiedStream.pipe(demuxer);
-
-                const cleanup = async () => {
-                    fetchController.abort();
-                    if (!demuxer.destroyed) demuxer.destroy();
-                    if (!verifiedStream.destroyed) verifiedStream.destroy();
-                    if (!nodeStream.destroyed) nodeStream.destroy();
-                };
-
-                return {
-                    mode,
-                    outputEncoding: "opus-packets",
-                    stream: demuxer,
-                    probe,
-                    cleanup,
-                };
-            }
-
-            // Header sniff revealed non-passthrough format: fall through into FFmpeg via verifiedStream
             return this.spawnFfmpegPipeline({
-                inputSource: "pipe:0",
-                pipeStream: verifiedStream,
-                isHttpInput: false,
+                inputSource: descriptor.url,
+                inputHeaders: descriptor.headers,
+                isHttpInput: true,
                 seekSeconds: 0,
                 volumePercent,
                 qualityProfile,
                 filters: request.filters,
                 equalizer: request.equalizer,
                 normalizeAudio: request.normalizeAudio,
-                useInlinePcm,
-                probe,
+                useInlinePcm: false,
+                copyOpus: true,
+                probe: {
+                    container: descriptor.container === "webm" ? "webm" : "ogg",
+                    codec: "opus",
+                    sampleRate: 48_000,
+                    channels: 2,
+                    opusPassthroughCompatible: true,
+                },
                 signal: request.signal,
             });
         }
@@ -346,6 +294,7 @@ export class AudioPipeline {
         equalizer?: readonly EqualizerBand[];
         normalizeAudio?: boolean;
         useInlinePcm: boolean;
+        copyOpus?: boolean;
         probe: ProbeResult;
         signal?: AbortSignal;
     }): PreparedAudioStream {
@@ -355,6 +304,7 @@ export class AudioPipeline {
             inputHeaders: params.inputHeaders,
             seekSeconds: params.seekSeconds,
             outputMode,
+            copyOpus: params.copyOpus,
             qualityProfile: params.qualityProfile,
             filters: params.filters,
             equalizer: params.equalizer,
@@ -408,6 +358,7 @@ export class AudioPipeline {
         }
 
         const demuxer = new prism.opus.OggDemuxer();
+        const bufferedStream = bufferOpusPackets(demuxer);
         handle.stdout.on("error", (err) => {
             if (!demuxer.destroyed) demuxer.destroy(err);
         });
@@ -415,20 +366,32 @@ export class AudioPipeline {
             if (code !== 0 && code !== null && !params.signal?.aborted) {
                 const stderr = handle.getStderr().trim();
                 this.logger?.debug({ code, stderr }, "FFmpeg pipeline terminated abnormally");
+                if (
+                    (stderr.includes("403") ||
+                        stderr.includes("404") ||
+                        stderr.includes("410") ||
+                        stderr.includes("Server returned 4")) &&
+                    !demuxer.destroyed
+                ) {
+                    demuxer.destroy(
+                        new ExpiredStreamError(`FFmpeg stream expired/denied: ${stderr}`, 403),
+                    );
+                }
             }
         });
         handle.stdout.pipe(demuxer);
 
         const cleanup = async () => {
+            if (!bufferedStream.destroyed) bufferedStream.destroy();
             if (!demuxer.destroyed) demuxer.destroy();
             if (params.pipeStream && !params.pipeStream.destroyed) params.pipeStream.destroy();
             await handle.kill();
         };
 
         return {
-            mode: "ffmpeg-ogg-opus",
+            mode: params.copyOpus ? "ffmpeg-copy-ogg-opus" : "ffmpeg-ogg-opus",
             outputEncoding: "opus-packets",
-            stream: demuxer,
+            stream: bufferedStream,
             probe: params.probe,
             processId: handle.id,
             cleanup,

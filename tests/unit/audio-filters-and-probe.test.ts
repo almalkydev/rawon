@@ -1,8 +1,10 @@
+import { PassThrough } from "node:stream";
 import {
     buildFfmpegArgs,
     buildFilterChain,
     canUseOpusPassthrough,
     inspectHeaderBytes,
+    peekStreamAndProbe,
     SmoothVolumeTransform,
 } from "@rawon/audio-engine";
 import { describe, expect, it } from "vitest";
@@ -146,5 +148,24 @@ describe("Audio Engine Codec Probe, Filter Builder & SmoothVolumeTransform", () 
             expect(val).toBeLessThanOrEqual(32_767);
             expect(val).toBeGreaterThanOrEqual(-32_768);
         }
+    });
+
+    it("propagates mid-stream source errors after header probing completes", async () => {
+        const source = new PassThrough();
+        const header = buildOggOpusHeadHeader(2, 48_000);
+        const probePromise = peekStreamAndProbe(source, undefined, 64);
+
+        source.write(header);
+        const { probe, stream } = await probePromise;
+        expect(probe.opusPassthroughCompatible).toBe(true);
+
+        const receivedError = new Promise<Error>((resolve) => {
+            stream.once("error", resolve);
+        });
+        stream.resume();
+
+        source.emit("error", new Error("upstream socket reset"));
+        const err = await receivedError;
+        expect(err.message).toBe("upstream socket reset");
     });
 });

@@ -15,8 +15,10 @@ import { type Logger, ProviderError, RateLimitError } from "@rawon/shared";
 
 export interface YtDlpFormatEntry {
     format_id?: string;
+    format_note?: string;
     url?: string;
     ext?: string;
+    protocol?: string;
     acodec?: string;
     vcodec?: string;
     asr?: number;
@@ -64,6 +66,8 @@ export interface YtDlpDumpOptions {
     playlistEnd?: number;
     playlistStart?: number;
     format?: string;
+    extractorArgs?: string;
+    ignoreErrors?: boolean;
     signal?: AbortSignal;
     timeoutMs?: number;
 }
@@ -222,43 +226,76 @@ export class YtDlpClient {
     }
 
     public async dumpJson(target: string, options: YtDlpDumpOptions = {}): Promise<YtDlpEntry> {
-        const args = [
-            "--dump-single-json",
-            "--skip-download",
-            "--quiet",
-            "--no-warnings",
-            "--ignore-errors",
-            "--no-check-certificates",
-            "--js-runtimes",
-            "node",
-        ];
+        const buildArgs = (withRemoteComponents: boolean): string[] => {
+            const args = [
+                "--dump-single-json",
+                "--skip-download",
+                "--quiet",
+                "--no-warnings",
+                "--no-check-certificates",
+                "--js-runtimes",
+                "node",
+            ];
 
-        if (options.format) {
-            args.push("-f", options.format);
-        }
-        if (options.flatPlaylist) args.push("--flat-playlist");
-        if (options.noPlaylist) args.push("--no-playlist");
-        if (options.yesPlaylist) args.push("--yes-playlist");
-        if (options.playlistStart !== undefined)
-            args.push("--playlist-start", String(options.playlistStart));
-        if (options.playlistEnd !== undefined)
-            args.push("--playlist-end", String(options.playlistEnd));
+            if (withRemoteComponents) {
+                args.push("--remote-components", "ejs:github");
+            }
 
-        this.appendAuthArgs(args);
-        args.push("--", target);
+            // Only ignore per-item errors on playlist dumps so single-track lookups never silently print "null"
+            if (options.ignoreErrors ?? Boolean(options.flatPlaylist || options.yesPlaylist)) {
+                args.push("--ignore-errors");
+            }
+
+            if (options.format) {
+                args.push("-f", options.format);
+            }
+            if (options.extractorArgs) {
+                args.push("--extractor-args", options.extractorArgs);
+            }
+            if (options.flatPlaylist) args.push("--flat-playlist");
+            if (options.noPlaylist) args.push("--no-playlist");
+            if (options.yesPlaylist) args.push("--yes-playlist");
+            if (options.playlistStart !== undefined)
+                args.push("--playlist-start", String(options.playlistStart));
+            if (options.playlistEnd !== undefined)
+                args.push("--playlist-end", String(options.playlistEnd));
+
+            this.appendAuthArgs(args);
+            args.push("--", target);
+            return args;
+        };
 
         const timeoutMs = options.timeoutMs ?? 25_000;
-        const { stdout, stderr, exitCode } = await this.execCapture(
-            args,
-            timeoutMs,
-            options.signal,
-        );
+        let result = await this.execCapture(buildArgs(true), timeoutMs, options.signal);
+
+        // Fallback gracefully if an older yt-dlp binary rejects --remote-components
+        if (
+            result.exitCode !== 0 &&
+            result.stderr.toLowerCase().includes("no such option: --remote-components")
+        ) {
+            result = await this.execCapture(buildArgs(false), timeoutMs, options.signal);
+        }
+
+        const { stdout, stderr, exitCode } = result;
 
         if (stdout.trim().length > 0) {
             try {
-                const parsed = JSON.parse(stdout) as YtDlpEntry;
-                return parsed;
+                const parsed = JSON.parse(stdout) as YtDlpEntry | null;
+                if (parsed && typeof parsed === "object") {
+                    return parsed;
+                }
+                if (stderr.trim()) {
+                    throw classifyYtDlpError(stderr);
+                }
+                throw new ProviderError(
+                    `yt-dlp returned empty metadata for ${target}`,
+                    "unavailable",
+                    true,
+                );
             } catch (err) {
+                if (err instanceof ProviderError || err instanceof RateLimitError) {
+                    throw err;
+                }
                 if (stderr.trim()) {
                     throw classifyYtDlpError(stderr);
                 }
@@ -295,6 +332,8 @@ export class YtDlpClient {
             "--no-playlist",
             "--js-runtimes",
             "node",
+            "--remote-components",
+            "ejs:github",
         ];
         this.appendAuthArgs(args);
         args.push("--", targetUrl);
@@ -468,9 +507,28 @@ export class YtDlpClient {
     }
 }
 
-export function extractBestAudioFormat(entry: YtDlpEntry): YtDlpFormatEntry | null {
+export function isHlsFormat(fmt: { url?: string; protocol?: string } | null | undefined): boolean {
+    if (!fmt) return false;
+    const proto = fmt.protocol?.toLowerCase() ?? "";
+    const url = fmt.url?.toLowerCase() ?? "";
+    return proto.includes("m3u8") || url.includes(".m3u8");
+}
+
+export function extractBestAudioFormat(
+    entry: YtDlpEntry | null | undefined,
+): YtDlpFormatEntry | null {
+    if (!entry || typeof entry !== "object") {
+        return null;
+    }
+
     const url = entry.url;
-    if (url && entry.vcodec === "none" && entry.acodec && entry.acodec !== "none") {
+    if (
+        url &&
+        entry.vcodec === "none" &&
+        entry.acodec &&
+        entry.acodec !== "none" &&
+        !isHlsFormat({ url })
+    ) {
         return {
             url,
             ext: entry.ext,
@@ -483,8 +541,11 @@ export function extractBestAudioFormat(entry: YtDlpEntry): YtDlpFormatEntry | nu
         };
     }
 
-    const candidates = [...(entry.requested_formats ?? []), ...(entry.formats ?? [])].filter(
-        (f) => f.url && f.acodec && f.acodec !== "none" && (!f.vcodec || f.vcodec === "none"),
+    const rawCandidates = [...(entry.requested_formats ?? []), ...(entry.formats ?? [])];
+    const candidates = rawCandidates.filter(
+        (f): f is YtDlpFormatEntry =>
+            Boolean(f && typeof f === "object" && f.url && f.acodec && f.acodec !== "none") &&
+            (!f.vcodec || f.vcodec === "none"),
     );
 
     if (candidates.length === 0) {
@@ -502,9 +563,18 @@ export function extractBestAudioFormat(entry: YtDlpEntry): YtDlpFormatEntry | nu
     }
 
     candidates.sort((a, b) => {
-        const aOpus = a.acodec?.toLowerCase().includes("opus") && a.asr === 48_000 ? 1 : 0;
-        const bOpus = b.acodec?.toLowerCase().includes("opus") && b.asr === 48_000 ? 1 : 0;
+        // Strongly prefer progressive direct HTTP streams over segmented HLS (.m3u8) playlists
+        const aDirect = isHlsFormat(a) ? 0 : 1;
+        const bDirect = isHlsFormat(b) ? 0 : 1;
+        if (aDirect !== bDirect) return bDirect - aDirect;
+
+        // Prefer native 48 kHz Opus (supports lossless Discord Opus passthrough)
+        const aOpus =
+            a.acodec?.toLowerCase().includes("opus") && (!a.asr || a.asr === 48_000) ? 1 : 0;
+        const bOpus =
+            b.acodec?.toLowerCase().includes("opus") && (!b.asr || b.asr === 48_000) ? 1 : 0;
         if (aOpus !== bOpus) return bOpus - aOpus;
+
         return (b.abr ?? b.tbr ?? 0) - (a.abr ?? a.tbr ?? 0);
     });
 

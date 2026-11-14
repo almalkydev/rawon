@@ -126,12 +126,24 @@ export async function peekStreamAndProbe(
     return new Promise((resolve, reject) => {
         let done = false;
 
+        const forwardError = (err: Error) => {
+            if (!out.destroyed) {
+                out.destroy(err);
+            }
+        };
+
         const finishProbe = () => {
             if (done) return;
             done = true;
             source.removeListener("data", onData);
             source.removeListener("end", onEnd);
             source.removeListener("error", onError);
+
+            // Preserve error propagation from source to out for the entire remainder of the stream
+            source.on("error", forwardError);
+            out.once("close", () => {
+                source.removeListener("error", forwardError);
+            });
 
             const head = Buffer.concat(collected);
             const probe = inspectHeaderBytes(head, hint);

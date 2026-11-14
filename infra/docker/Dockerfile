@@ -34,6 +34,7 @@ ENV NODE_ENV=production
 ENV FFMPEG_PATH=/usr/bin/ffmpeg
 ENV YT_DLP_PATH=/usr/local/bin/yt-dlp
 ENV CACHE_DIR=/app/cache
+ENV XDG_CACHE_HOME=/app/cache/xdg
 ENV DATA_DIR=/app/data
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -61,7 +62,7 @@ COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/apps ./apps
 COPY LICENSE NOTICE ./
 
-RUN mkdir -p /app/cache /app/data && chown -R rawon:rawon /app
+RUN mkdir -p /app/cache /app/cache/xdg /app/data && chown -R rawon:rawon /app
 
 USER rawon
 

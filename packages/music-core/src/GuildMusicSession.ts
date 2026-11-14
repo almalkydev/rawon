@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import type { AudioPipeline, PreparedAudioStream } from "@rawon/audio-engine";
 import { type DiskAudioCache, hashCanonicalAudioKey, type PrefetchCoordinator } from "@rawon/cache";
 import { createDefaultPlayerState } from "@rawon/config";
@@ -25,6 +25,25 @@ import {
     ValidationError,
 } from "@rawon/shared";
 import type { PlaybackFinishReason, VoiceMemberInfo, VoiceTransport } from "./VoiceTransport.js";
+
+function isHlsStreamDescriptor(descriptor: StreamDescriptor): boolean {
+    const container = descriptor.container?.toLowerCase();
+    if (container === "hls" || container === "m3u8") {
+        return true;
+    }
+    const urlLower = descriptor.url.toLowerCase();
+    return urlLower.includes(".m3u8") || urlLower.includes("/hls_playlist/");
+}
+
+function isNonAudioContentType(contentType: string | null): boolean {
+    if (!contentType) return false;
+    const normalized = contentType.toLowerCase();
+    return (
+        normalized.includes("mpegurl") ||
+        normalized.includes("text/html") ||
+        normalized.includes("application/xhtml+xml")
+    );
+}
 
 export interface SessionNotice {
     level: "info" | "warn" | "error";
@@ -807,7 +826,8 @@ export class GuildMusicSession extends EventEmitter {
                 !descriptor.cacheFilePath &&
                 !descriptor.isLive &&
                 seekSeconds === 0 &&
-                descriptor.sourceType === "url"
+                descriptor.sourceType === "url" &&
+                !isHlsStreamDescriptor(descriptor)
             ) {
                 const teed = await this.tryTeeCacheStream(
                     canonicalKey,
@@ -1051,31 +1071,49 @@ export class GuildMusicSession extends EventEmitter {
         descriptor: StreamDescriptor,
         signal: AbortSignal,
     ): Promise<Readable | null> {
-        if (!this.diskCache || this.diskCache.isInProgress(canonicalKey)) {
+        if (
+            !this.diskCache ||
+            this.diskCache.isInProgress(canonicalKey) ||
+            isHlsStreamDescriptor(descriptor)
+        ) {
             return null;
         }
+        let initialBody: import("node:stream/web").ReadableStream<Uint8Array> | null = null;
         try {
-            const res = await fetch(descriptor.url, {
+            const initialRes = await fetch(descriptor.url, {
                 headers: descriptor.headers,
                 signal,
             });
             if (
-                res.status === 401 ||
-                res.status === 403 ||
-                res.status === 404 ||
-                res.status === 410
+                initialRes.status === 401 ||
+                initialRes.status === 403 ||
+                initialRes.status === 404 ||
+                initialRes.status === 410
             ) {
-                throw new ExpiredStreamError(`Stream URL expired (HTTP ${res.status})`, res.status);
+                throw new ExpiredStreamError(
+                    `Stream URL expired (HTTP ${initialRes.status})`,
+                    initialRes.status,
+                );
             }
-            if (!res.ok || !res.body) {
+            if (!initialRes.ok || !initialRes.body) {
                 return null;
             }
-            const nodeStream = Readable.fromWeb(
-                res.body as import("node:stream/web").ReadableStream<Uint8Array>,
-            );
+            if (isNonAudioContentType(initialRes.headers.get("content-type"))) {
+                await initialRes.body.cancel().catch(() => undefined);
+                return null;
+            }
+
+            initialBody = initialRes.body as import("node:stream/web").ReadableStream<Uint8Array>;
+            const contentLengthHeader = initialRes.headers.get("content-length");
+            const expectedTotalBytes = contentLengthHeader
+                ? Number.parseInt(contentLengthHeader, 10)
+                : Number.NaN;
+            const canResumeRanges = Number.isFinite(expectedTotalBytes) && expectedTotalBytes > 0;
+
+            const out = new PassThrough({ highWaterMark: 256 * 1024 });
             const { playbackStream } = await this.diskCache.cacheFromStream(
                 canonicalKey,
-                nodeStream,
+                out,
                 {
                     container: descriptor.container,
                     codec: descriptor.codec,
@@ -1085,13 +1123,163 @@ export class GuildMusicSession extends EventEmitter {
                 },
                 { teeToPlayback: true },
             );
-            return playbackStream ?? null;
+            if (!playbackStream) {
+                await initialBody.cancel().catch(() => undefined);
+                out.destroy();
+                return null;
+            }
+
+            void this.pumpResumableHttpBody(
+                out,
+                initialBody,
+                descriptor,
+                expectedTotalBytes,
+                canResumeRanges,
+                signal,
+            );
+            initialBody = null;
+            return playbackStream;
         } catch (err) {
+            if (initialBody) {
+                await initialBody.cancel().catch(() => undefined);
+            }
             if (err instanceof ExpiredStreamError) {
                 throw err;
             }
             this.logger?.debug({ err, canonicalKey }, "Tee-to-cache fallback to direct pipeline");
             return null;
+        }
+    }
+
+    private async pumpResumableHttpBody(
+        out: PassThrough,
+        initialBody: import("node:stream/web").ReadableStream<Uint8Array>,
+        descriptor: StreamDescriptor,
+        expectedTotalBytes: number,
+        canResumeRanges: boolean,
+        signal: AbortSignal,
+    ): Promise<void> {
+        let activeReader: ReadableStreamDefaultReader<Uint8Array> | null = initialBody.getReader();
+        let bytesRead = 0;
+        let retryAttempt = 0;
+        const maxRetries = 3;
+
+        const cancelReader = () => {
+            const reader = activeReader;
+            activeReader = null;
+            if (reader) {
+                void reader.cancel().catch(() => undefined);
+            }
+        };
+        const onAbort = () => {
+            cancelReader();
+            if (!out.destroyed) {
+                out.destroy(new Error("Stream aborted"));
+            }
+        };
+        const onOutClose = () => {
+            cancelReader();
+        };
+
+        signal.addEventListener("abort", onAbort, { once: true });
+        out.once("close", onOutClose);
+
+        const waitForDrain = (): Promise<void> =>
+            new Promise((resolve) => {
+                const cleanup = () => {
+                    out.off("drain", cleanup);
+                    out.off("close", cleanup);
+                    out.off("error", cleanup);
+                    resolve();
+                };
+                out.once("drain", cleanup);
+                out.once("close", cleanup);
+                out.once("error", cleanup);
+            });
+
+        try {
+            while (!out.destroyed && !signal.aborted) {
+                try {
+                    if (!activeReader) break;
+                    const { done, value } = await activeReader.read();
+                    if (done) {
+                        if (canResumeRanges && bytesRead > 0 && bytesRead < expectedTotalBytes) {
+                            throw new Error(
+                                `Truncated HTTP stream (${bytesRead}/${expectedTotalBytes} bytes)`,
+                            );
+                        }
+                        if (!out.destroyed && !out.writableEnded) {
+                            out.end();
+                        }
+                        return;
+                    }
+                    if (!value || value.byteLength === 0) continue;
+
+                    bytesRead += value.byteLength;
+                    retryAttempt = 0;
+                    if (!out.destroyed && !out.writableEnded) {
+                        const ok = out.write(Buffer.from(value));
+                        if (!ok && !out.destroyed && !signal.aborted) {
+                            await waitForDrain();
+                        }
+                    }
+                } catch (err) {
+                    cancelReader();
+                    if (signal.aborted || out.destroyed) {
+                        return;
+                    }
+                    const canRetry =
+                        canResumeRanges &&
+                        bytesRead > 0 &&
+                        bytesRead < expectedTotalBytes &&
+                        retryAttempt < maxRetries;
+                    if (!canRetry) {
+                        if (!out.destroyed) {
+                            out.destroy(err instanceof Error ? err : new Error(String(err)));
+                        }
+                        return;
+                    }
+
+                    retryAttempt += 1;
+                    await new Promise((resolve) => setTimeout(resolve, 150 * retryAttempt));
+                    if (signal.aborted || out.destroyed) {
+                        return;
+                    }
+
+                    const resumeRes = await fetch(descriptor.url, {
+                        headers: {
+                            ...descriptor.headers,
+                            Range: `bytes=${bytesRead}-`,
+                        },
+                        signal,
+                    });
+                    if (
+                        resumeRes.status === 401 ||
+                        resumeRes.status === 403 ||
+                        resumeRes.status === 404 ||
+                        resumeRes.status === 410
+                    ) {
+                        throw new ExpiredStreamError(
+                            `Stream URL expired on resume (HTTP ${resumeRes.status})`,
+                            resumeRes.status,
+                        );
+                    }
+                    if (resumeRes.status !== 206 || !resumeRes.body) {
+                        throw new Error(`Unexpected status ${resumeRes.status} on Range resume`);
+                    }
+                    activeReader = (
+                        resumeRes.body as import("node:stream/web").ReadableStream<Uint8Array>
+                    ).getReader();
+                }
+            }
+        } catch (err) {
+            if (!out.destroyed) {
+                out.destroy(err instanceof Error ? err : new Error(String(err)));
+            }
+        } finally {
+            signal.removeEventListener("abort", onAbort);
+            out.off("close", onOutClose);
+            cancelReader();
         }
     }
 
@@ -1121,10 +1309,16 @@ export class GuildMusicSession extends EventEmitter {
                     item.track = hydrated;
                     const desc = await this.providers.getStreamDescriptor(hydrated, { signal });
                     this.activeDescriptorCache.set(canonicalKey, desc);
-                    if (desc.isLive || desc.sourceType !== "url") return;
+                    if (desc.isLive || desc.sourceType !== "url" || isHlsStreamDescriptor(desc)) {
+                        return;
+                    }
 
                     const res = await fetch(desc.url, { headers: desc.headers, signal });
                     if (!res.ok || !res.body) return;
+                    if (isNonAudioContentType(res.headers.get("content-type"))) {
+                        await res.body.cancel().catch(() => undefined);
+                        return;
+                    }
                     const nodeStream = Readable.fromWeb(
                         res.body as import("node:stream/web").ReadableStream<Uint8Array>,
                     );

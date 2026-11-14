@@ -84,9 +84,24 @@ async function bootstrapWorker(): Promise<void> {
             key: canonicalKey,
             run: async (signal) => {
                 const desc = await providers.getStreamDescriptor(track, { signal });
-                if (desc.isLive || desc.sourceType !== "url") return;
+                const urlLower = desc.url.toLowerCase();
+                if (
+                    desc.isLive ||
+                    desc.sourceType !== "url" ||
+                    desc.container?.toLowerCase() === "hls" ||
+                    desc.container?.toLowerCase() === "m3u8" ||
+                    urlLower.includes(".m3u8") ||
+                    urlLower.includes("/hls_playlist/")
+                ) {
+                    return;
+                }
                 const res = await fetch(desc.url, { headers: desc.headers, signal });
                 if (!res.ok || !res.body) return;
+                const contentType = res.headers.get("content-type")?.toLowerCase() ?? "";
+                if (contentType.includes("mpegurl") || contentType.includes("text/html")) {
+                    await res.body.cancel().catch(() => undefined);
+                    return;
+                }
                 const nodeStream = Readable.fromWeb(
                     res.body as import("node:stream/web").ReadableStream<Uint8Array>,
                 );

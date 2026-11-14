@@ -288,188 +288,203 @@ export class MultiBotSupervisor {
         });
 
         client.on(Events.MessageCreate, async (message) => {
-            if (message.author.bot) return;
+            try {
+                if (message.author.bot) return;
 
-            // 0. Check text-based track selection reply ("1", "1 3", or "cancel"/"c")
-            if (message.guild) {
-                const pending = findPendingSelectionForUser(
-                    message.guild.id,
-                    message.channelId,
-                    message.author.id,
-                );
-                if (pending) {
-                    const text = message.content.trim().toLowerCase();
-                    if (/^(?:\d+(?:[\s,]+\d+)*|c|cancel)$/u.test(text)) {
-                        const [botSettings, guildCfg] = await Promise.all([
-                            this.store.getBotSettings(),
-                            this.store.getGuildConfig(message.guild.id),
-                        ]);
-                        const loc = this.i18n.resolveLocale(
-                            guildCfg.locale,
-                            this.config.defaultLocale,
-                        );
-                        const t = this.i18n.scoped(loc);
-                        deletePendingSelection(pending.id);
+                // 0. Check text-based track selection reply ("1", "1 3", or "cancel"/"c")
+                if (message.guild) {
+                    const pending = findPendingSelectionForUser(
+                        message.guild.id,
+                        message.channelId,
+                        message.author.id,
+                    );
+                    if (pending) {
+                        const text = message.content.trim().toLowerCase();
+                        if (/^(?:\d+(?:[\s,]+\d+)*|c|cancel)$/u.test(text)) {
+                            const [botSettings, guildCfg] = await Promise.all([
+                                this.store.getBotSettings(),
+                                this.store.getGuildConfig(message.guild.id),
+                            ]);
+                            const loc = this.i18n.resolveLocale(
+                                guildCfg.locale,
+                                this.config.defaultLocale,
+                            );
+                            const t = this.i18n.scoped(loc);
+                            deletePendingSelection(pending.id);
 
-                        if (text === "c" || text === "cancel") {
+                            if (text === "c" || text === "cancel") {
+                                await message
+                                    .reply(
+                                        buildNoticeContainer({
+                                            colorHex: botSettings.embedColor,
+                                            description: t("commands.music.search.canceledMessage"),
+                                        }) as never,
+                                    )
+                                    .catch(() => undefined);
+                                return;
+                            }
+
+                            const indices = Array.from(
+                                new Set(
+                                    text
+                                        .split(/[\s,]+/u)
+                                        .map((s) => Number.parseInt(s, 10) - 1)
+                                        .filter((i) => i >= 0 && i < pending.tracks.length),
+                                ),
+                            );
+                            const chosen = indices
+                                .map((i) => pending.tracks[i])
+                                .filter((tr): tr is NonNullable<typeof tr> => Boolean(tr));
+
+                            const vc = message.member?.voice.channel as VoiceBasedChannel | null;
+                            if (!vc || chosen.length === 0) {
+                                await message
+                                    .reply(
+                                        buildNoticeContainer({
+                                            colorHex: botSettings.embedColor,
+                                            description: `${botSettings.noEmoji} ${t(vc ? "commands.music.search.noSelection" : "utils.musicDecorator.noInVC")}`,
+                                        }) as never,
+                                    )
+                                    .catch(() => undefined);
+                                return;
+                            }
+
+                            const session = await this.sessions.getOrCreateSession({
+                                guildId: message.guild.id,
+                                botId: runtime.botId,
+                                voiceChannelId: vc.id,
+                                textChannelId: message.channelId,
+                                createTransport: () =>
+                                    new DiscordVoiceTransport({
+                                        client: runtime.client,
+                                        logger: this.logger,
+                                    }),
+                            });
+                            await session.addAndMaybePlay({
+                                tracks: chosen,
+                                requesterId: message.author.id,
+                                requesterTag: message.author.tag,
+                            });
+                            await this.services
+                                .syncRequestChannelPlayer(message.guild.id, runtime.botId)
+                                .catch(() => undefined);
+                            const first = chosen[0];
                             await message
                                 .reply(
                                     buildNoticeContainer({
                                         colorHex: botSettings.embedColor,
-                                        description: t("commands.music.search.canceledMessage"),
+                                        description: `${botSettings.yesEmoji} ${
+                                            chosen.length === 1 && first
+                                                ? t("requestChannel.addedToQueue", {
+                                                      song: `**[${first.title}](${first.url})**`,
+                                                  })
+                                                : t("utils.generalHandler.handleVideoInitial", {
+                                                      length: chosen.length,
+                                                  })
+                                        }`,
                                     }) as never,
                                 )
                                 .catch(() => undefined);
                             return;
                         }
-
-                        const indices = Array.from(
-                            new Set(
-                                text
-                                    .split(/[\s,]+/u)
-                                    .map((s) => Number.parseInt(s, 10) - 1)
-                                    .filter((i) => i >= 0 && i < pending.tracks.length),
-                            ),
-                        );
-                        const chosen = indices
-                            .map((i) => pending.tracks[i])
-                            .filter((tr): tr is NonNullable<typeof tr> => Boolean(tr));
-
-                        const vc = message.member?.voice.channel as VoiceBasedChannel | null;
-                        if (!vc || chosen.length === 0) {
-                            await message
-                                .reply(
-                                    buildNoticeContainer({
-                                        colorHex: botSettings.embedColor,
-                                        description: `${botSettings.noEmoji} ${t(vc ? "commands.music.search.noSelection" : "utils.musicDecorator.noInVC")}`,
-                                    }) as never,
-                                )
-                                .catch(() => undefined);
-                            return;
-                        }
-
-                        const session = await this.sessions.getOrCreateSession({
-                            guildId: message.guild.id,
-                            botId: runtime.botId,
-                            voiceChannelId: vc.id,
-                            textChannelId: message.channelId,
-                            createTransport: () =>
-                                new DiscordVoiceTransport({
-                                    client: runtime.client,
-                                    logger: this.logger,
-                                }),
-                        });
-                        await session.addAndMaybePlay({
-                            tracks: chosen,
-                            requesterId: message.author.id,
-                            requesterTag: message.author.tag,
-                        });
-                        await this.services
-                            .syncRequestChannelPlayer(message.guild.id, runtime.botId)
-                            .catch(() => undefined);
-                        const first = chosen[0];
-                        await message
-                            .reply(
-                                buildNoticeContainer({
-                                    colorHex: botSettings.embedColor,
-                                    description: `${botSettings.yesEmoji} ${
-                                        chosen.length === 1 && first
-                                            ? t("requestChannel.addedToQueue", {
-                                                  song: `**[${first.title}](${first.url})**`,
-                                              })
-                                            : t("utils.generalHandler.handleVideoInitial", {
-                                                  length: chosen.length,
-                                              })
-                                    }`,
-                                }) as never,
-                            )
-                            .catch(() => undefined);
-                        return;
                     }
                 }
-            }
 
-            // 1. Check Hydra request channel ownership for THIS specific bot
-            if (message.guild) {
+                // 1. Check Hydra request channel ownership for THIS specific bot
+                if (message.guild) {
+                    const botSettings = await this.store.getBotSettings();
+                    const guildCfg = await this.store.getGuildConfig(message.guild.id);
+                    const loc = this.i18n.resolveLocale(guildCfg.locale, this.config.defaultLocale);
+                    const t = this.i18n.scoped(loc);
+                    const basePrefix = guildCfg.prefix ?? this.config.mainPrefix;
+                    const prefixes = [basePrefix, ...botSettings.altPrefix];
+
+                    const handledAsRequest = await this.requestChannels.handleMessage({
+                        message,
+                        runtime,
+                        botPrefixes: prefixes,
+                        t,
+                    });
+                    if (handledAsRequest) return;
+                }
+
+                if (!this.config.enablePrefix) return;
+
+                // 2. Prefix / Mention check
                 const botSettings = await this.store.getBotSettings();
-                const guildCfg = await this.store.getGuildConfig(message.guild.id);
-                const loc = this.i18n.resolveLocale(guildCfg.locale, this.config.defaultLocale);
-                const t = this.i18n.scoped(loc);
-                const basePrefix = guildCfg.prefix ?? this.config.mainPrefix;
-                const prefixes = [basePrefix, ...botSettings.altPrefix];
+                const guildCfg = message.guild
+                    ? await this.store.getGuildConfig(message.guild.id)
+                    : null;
+                const basePrefix = guildCfg?.prefix ?? this.config.mainPrefix;
+                const candidatePrefixes = [basePrefix, ...botSettings.altPrefix].filter(Boolean);
+                const mentionPfx = `<@${runtime.botId}>`;
+                const mentionNickPfx = `<@!${runtime.botId}>`;
 
-                const handledAsRequest = await this.requestChannels.handleMessage({
+                let matchedPrefix: string | null = null;
+                let explicitMentionTarget = false;
+
+                if (message.content.startsWith(mentionPfx)) {
+                    matchedPrefix = mentionPfx;
+                    explicitMentionTarget = true;
+                } else if (message.content.startsWith(mentionNickPfx)) {
+                    matchedPrefix = mentionNickPfx;
+                    explicitMentionTarget = true;
+                } else {
+                    for (const p of candidatePrefixes) {
+                        if (message.content.startsWith(p)) {
+                            matchedPrefix = p;
+                            break;
+                        }
+                    }
+                }
+
+                if (!matchedPrefix) {
+                    return;
+                }
+
+                const rest = message.content.slice(matchedPrefix.length).trim();
+                if (!rest && explicitMentionTarget && message.guild) {
+                    const loc = this.i18n.resolveLocale(
+                        guildCfg?.locale,
+                        this.config.defaultLocale,
+                    );
+                    const isPrimary = await this.isPrimaryForGuild(message.guild.id, runtime.botId);
+                    if (!isPrimary) return;
+                    const t = this.i18n.scoped(loc);
+                    await message
+                        .reply(
+                            t("events.createMessage", {
+                                author: `<@${message.author.id}>`,
+                                prefix: `\`${basePrefix}\``,
+                            }),
+                        )
+                        .catch(() => undefined);
+                    return;
+                }
+
+                // Multi-bot coordination: only elected primary executes non-mention prefix commands
+                if (message.guild && !explicitMentionTarget && this.runtimes.length > 1) {
+                    const isPrimary = await this.isPrimaryForGuild(message.guild.id, runtime.botId);
+                    if (!isPrimary) return;
+                }
+
+                await this.router.handlePrefixMessage({
                     message,
                     runtime,
-                    botPrefixes: prefixes,
-                    t,
+                    matchedPrefix,
+                    contentAfterPrefix: rest,
                 });
-                if (handledAsRequest) return;
+            } catch (err) {
+                this.logger.error(
+                    {
+                        err,
+                        botId: runtime.botId,
+                        guildId: message.guildId,
+                        channelId: message.channelId,
+                    },
+                    "Unhandled error in MessageCreate handler",
+                );
             }
-
-            if (!this.config.enablePrefix) return;
-
-            // 2. Prefix / Mention check
-            const botSettings = await this.store.getBotSettings();
-            const guildCfg = message.guild
-                ? await this.store.getGuildConfig(message.guild.id)
-                : null;
-            const basePrefix = guildCfg?.prefix ?? this.config.mainPrefix;
-            const candidatePrefixes = [basePrefix, ...botSettings.altPrefix].filter(Boolean);
-            const mentionPfx = `<@${runtime.botId}>`;
-            const mentionNickPfx = `<@!${runtime.botId}>`;
-
-            let matchedPrefix: string | null = null;
-            let explicitMentionTarget = false;
-
-            if (message.content.startsWith(mentionPfx)) {
-                matchedPrefix = mentionPfx;
-                explicitMentionTarget = true;
-            } else if (message.content.startsWith(mentionNickPfx)) {
-                matchedPrefix = mentionNickPfx;
-                explicitMentionTarget = true;
-            } else {
-                for (const p of candidatePrefixes) {
-                    if (message.content.startsWith(p)) {
-                        matchedPrefix = p;
-                        break;
-                    }
-                }
-            }
-
-            if (!matchedPrefix) {
-                return;
-            }
-
-            const rest = message.content.slice(matchedPrefix.length).trim();
-            if (!rest && explicitMentionTarget && message.guild) {
-                const loc = this.i18n.resolveLocale(guildCfg?.locale, this.config.defaultLocale);
-                const isPrimary = await this.isPrimaryForGuild(message.guild.id, runtime.botId);
-                if (!isPrimary) return;
-                const t = this.i18n.scoped(loc);
-                await message
-                    .reply(
-                        t("events.createMessage", {
-                            author: `<@${message.author.id}>`,
-                            prefix: `\`${basePrefix}\``,
-                        }),
-                    )
-                    .catch(() => undefined);
-                return;
-            }
-
-            // Multi-bot coordination: only elected primary executes non-mention prefix commands
-            if (message.guild && !explicitMentionTarget && this.runtimes.length > 1) {
-                const isPrimary = await this.isPrimaryForGuild(message.guild.id, runtime.botId);
-                if (!isPrimary) return;
-            }
-
-            await this.router.handlePrefixMessage({
-                message,
-                runtime,
-                matchedPrefix,
-                contentAfterPrefix: rest,
-            });
         });
 
         client.on(Events.MessageDelete, (msg) => {
@@ -481,54 +496,73 @@ export class MultiBotSupervisor {
         });
 
         client.on(Events.InteractionCreate, async (interaction) => {
-            if (interaction.isChatInputCommand()) {
-                await this.router.handleSlashCommand(interaction, runtime);
-            } else if (interaction.isAutocomplete()) {
-                await this.router.handleAutocomplete(interaction);
-            } else if (interaction.isMessageContextMenuCommand()) {
-                await this.router.handleMessageContextMenu(interaction, runtime);
-            } else if (
-                interaction.isButton() ||
-                interaction.isStringSelectMenu() ||
-                interaction.isModalSubmit()
-            ) {
-                await this.router.handleComponentInteraction(interaction, runtime);
+            try {
+                if (interaction.isChatInputCommand()) {
+                    await this.router.handleSlashCommand(interaction, runtime);
+                } else if (interaction.isAutocomplete()) {
+                    await this.router.handleAutocomplete(interaction);
+                } else if (interaction.isMessageContextMenuCommand()) {
+                    await this.router.handleMessageContextMenu(interaction, runtime);
+                } else if (
+                    interaction.isButton() ||
+                    interaction.isStringSelectMenu() ||
+                    interaction.isModalSubmit()
+                ) {
+                    await this.router.handleComponentInteraction(interaction, runtime);
+                }
+            } catch (err) {
+                this.logger.error(
+                    {
+                        err,
+                        botId: runtime.botId,
+                        guildId: interaction.guildId,
+                        interactionId: interaction.id,
+                    },
+                    "Unhandled error in InteractionCreate handler",
+                );
             }
         });
 
         client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
-            const guildId = newState.guild.id;
-            const session = this.sessions.getSession(guildId, runtime.botId);
-            if (!session) return;
+            try {
+                const guildId = newState.guild.id;
+                const session = this.sessions.getSession(guildId, runtime.botId);
+                if (!session) return;
 
-            const changedUserId = newState.id;
-            if (changedUserId === runtime.botId) {
-                // Bot left/kicked from VC
-                if (!newState.channelId) {
-                    await session.destroy("bot_disconnected");
-                    await this.services
-                        .syncRequestChannelPlayer(guildId, runtime.botId)
-                        .catch(() => undefined);
-                    return;
+                const changedUserId = newState.id;
+                if (changedUserId === runtime.botId) {
+                    // Bot left/kicked from VC
+                    if (!newState.channelId) {
+                        await session.destroy("bot_disconnected");
+                        await this.services
+                            .syncRequestChannelPlayer(guildId, runtime.botId)
+                            .catch(() => undefined);
+                        return;
+                    }
+                    // Bot moved to another VC (or region/stage promotion changed)
+                    if (oldState.channelId !== newState.channelId) {
+                        await session.moveVoiceChannel(newState.channelId);
+                    }
+                    const transport = new DiscordVoiceTransport({ client, logger: this.logger });
+                    await transport.ensureStageSpeaker(guildId, newState.channelId);
                 }
-                // Bot moved to another VC (or region/stage promotion changed)
-                if (oldState.channelId !== newState.channelId) {
-                    await session.moveVoiceChannel(newState.channelId);
-                }
-                const transport = new DiscordVoiceTransport({ client, logger: this.logger });
-                await transport.ensureStageSpeaker(guildId, newState.channelId);
-            }
 
-            if (
-                oldState.channelId === session.voiceChannelId ||
-                newState.channelId === session.voiceChannelId
-            ) {
-                const transport = new DiscordVoiceTransport({ client, logger: this.logger });
-                const members = await transport.getVoiceChannelMembers(
-                    guildId,
-                    session.voiceChannelId,
+                if (
+                    oldState.channelId === session.voiceChannelId ||
+                    newState.channelId === session.voiceChannelId
+                ) {
+                    const transport = new DiscordVoiceTransport({ client, logger: this.logger });
+                    const members = await transport.getVoiceChannelMembers(
+                        guildId,
+                        session.voiceChannelId,
+                    );
+                    session.handleVoiceMembersUpdate(members);
+                }
+            } catch (err) {
+                this.logger.error(
+                    { err, botId: runtime.botId, guildId: newState.guild.id },
+                    "Unhandled error in VoiceStateUpdate handler",
                 );
-                session.handleVoiceMembersUpdate(members);
             }
         });
 

@@ -8,7 +8,12 @@ import {
 } from "@rawon/shared";
 import type { ClassifiedQuery, MediaProvider, ProviderHealth, QueryKind } from "./interfaces.js";
 import { classifyQuery, extractYouTubeVideoId, isYouTubeMusicUrl } from "./QueryClassifier.js";
-import { extractBestAudioFormat, type YtDlpClient, type YtDlpEntry } from "./YtDlpClient.js";
+import {
+    extractBestAudioFormat,
+    isHlsFormat,
+    type YtDlpClient,
+    type YtDlpEntry,
+} from "./YtDlpClient.js";
 import { searchYouTubeMusicInnerTube, upgradeThumbnailUrl } from "./youtubeMusic.js";
 
 function positiveDuration(val: unknown): number {
@@ -150,6 +155,9 @@ export class YouTubeProvider implements MediaProvider {
     }
 
     public async hydrateTrack(track: Track): Promise<Track> {
+        if (track.duration > 0 && track.thumbnail && track.author && track.title) {
+            return track;
+        }
         const sourceUrl = track.playableUrl || track.url;
         const dump = await this.ytdlp.dumpJson(sourceUrl, { noPlaylist: true });
         const hydrated = mapEntryToTrack(
@@ -178,24 +186,58 @@ export class YouTubeProvider implements MediaProvider {
         signal?: AbortSignal,
     ): Promise<StreamDescriptor> {
         const target = track.playableUrl || track.url;
-        const entry = await this.ytdlp.dumpJson(target, {
-            noPlaylist: true,
-            format: "bestaudio[acodec=opus]/bestaudio/best",
-            signal,
-        });
+        let entry: YtDlpEntry | null = null;
+        let primaryErr: unknown = null;
 
-        const fmt = extractBestAudioFormat(entry);
-        const isLive = entry.is_live === true || entry.live_status === "is_live";
-        const videoId = extractYouTubeVideoId(track.id) ?? extractYouTubeVideoId(target);
-        const canonicalKey = videoId ? `youtube:${videoId}` : `youtube:${target}`;
+        try {
+            entry = await this.ytdlp.dumpJson(target, {
+                noPlaylist: true,
+                format: "bestaudio[acodec=opus]/bestaudio/best",
+                signal,
+            });
+        } catch (err) {
+            primaryErr = err;
+            if (err instanceof ProviderError && err.category === "age_restricted") {
+                throw err;
+            }
+        }
 
+        let fmt = extractBestAudioFormat(entry);
+
+        // Fallback to multi-client YouTube extraction + broader format selector when default client drops formats
         if (!fmt?.url) {
+            try {
+                const fallbackEntry = await this.ytdlp.dumpJson(target, {
+                    noPlaylist: true,
+                    format: "bestaudio/best",
+                    extractorArgs: "youtube:player_client=android_vr,mweb,web",
+                    signal,
+                });
+                const fallbackFmt = extractBestAudioFormat(fallbackEntry);
+                if (fallbackFmt?.url) {
+                    entry = fallbackEntry;
+                    fmt = fallbackFmt;
+                }
+            } catch (fallbackErr) {
+                if (!primaryErr) primaryErr = fallbackErr;
+            }
+        }
+
+        if (!fmt?.url || !entry) {
+            if (primaryErr instanceof ProviderError) {
+                throw primaryErr;
+            }
             throw new ProviderError(
                 `No playable audio format found for ${target}`,
                 "unavailable",
                 true,
+                primaryErr,
             );
         }
+
+        const isLive = entry.is_live === true || entry.live_status === "is_live";
+        const videoId = extractYouTubeVideoId(track.id) ?? extractYouTubeVideoId(target);
+        const canonicalKey = videoId ? `youtube:${videoId}` : `youtube:${target}`;
 
         const codec = fmt.acodec?.toLowerCase();
         const container = fmt.ext?.toLowerCase();
@@ -203,6 +245,7 @@ export class YouTubeProvider implements MediaProvider {
         const channels = fmt.audio_channels ?? (codec?.includes("opus") ? 2 : undefined);
         const passthrough =
             !isLive &&
+            !isHlsFormat(fmt) &&
             Boolean(codec?.includes("opus")) &&
             (container === "webm" || container === "ogg" || container === "opus") &&
             sampleRate === 48_000 &&

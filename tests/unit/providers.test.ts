@@ -1,6 +1,8 @@
 import {
     classifyQuery,
+    extractBestAudioFormat,
     extractYouTubeVideoId,
+    isHlsFormat,
     LyricsService,
     SpotifyProvider,
 } from "@rawon/providers";
@@ -165,5 +167,50 @@ describe("Provider Query Classification, Spotify Resolution & Lyrics", () => {
 
         const health = await lyrics.getHealth();
         expect(health.map((h) => h.name)).toEqual(["stegripe", "lrclib"]);
+    });
+
+    it("handles null entries and null format items without throwing, and prefers progressive streams over HLS", () => {
+        expect(extractBestAudioFormat(null as never)).toBeNull();
+        expect(extractBestAudioFormat({ formats: [null as never] } as never)).toBeNull();
+
+        const selected = extractBestAudioFormat({
+            id: "track1",
+            title: "Sample",
+            formats: [
+                null as never,
+                {
+                    url: "https://cf-hls-media.sndcdn.com/playlist/128.m3u8",
+                    acodec: "aac",
+                    vcodec: "none",
+                    abr: 256,
+                    ext: "m3u8",
+                    protocol: "m3u8_native",
+                },
+                {
+                    url: "https://rr1---sn.googlevideo.com/videoplayback?itag=251",
+                    acodec: "opus",
+                    vcodec: "none",
+                    abr: 160,
+                    ext: "webm",
+                    protocol: "https",
+                },
+            ],
+        });
+
+        expect(selected?.url).toBe("https://rr1---sn.googlevideo.com/videoplayback?itag=251");
+        expect(
+            isHlsFormat({
+                url: "https://cf-hls-media.sndcdn.com/playlist/128.m3u8",
+                protocol: "m3u8_native",
+                ext: "m3u8",
+            }),
+        ).toBe(true);
+        expect(
+            isHlsFormat({
+                url: "https://rr1---sn.googlevideo.com/videoplayback?itag=251",
+                protocol: "https",
+                ext: "webm",
+            }),
+        ).toBe(false);
     });
 });

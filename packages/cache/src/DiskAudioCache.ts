@@ -235,15 +235,59 @@ export class DiskAudioCache {
         const finalPath = join(this.cacheDir, fileName);
         const partPath = join(this.cacheDir, `${fileName}.${Date.now()}.part`);
 
-        const playbackStream = options.teeToPlayback ? new PassThrough() : undefined;
+        const playbackStream = options.teeToPlayback
+            ? new PassThrough({ highWaterMark: 256 * 1024 })
+            : undefined;
+        // Prevent uncaught EventEmitter crash if source fails before downstream attaches or after close
+        playbackStream?.on("error", () => undefined);
         const fileStream = createWriteStream(partPath);
         let totalBytes = 0;
 
         const completion = new Promise<CachedAudioMetadata | null>((resolve) => {
             let finished = false;
+            let waitingFileDrain = false;
+            let waitingPlaybackDrain = false;
+
+            const maybeResumeSource = () => {
+                if (
+                    !waitingFileDrain &&
+                    !waitingPlaybackDrain &&
+                    !sourceStream.destroyed &&
+                    sourceStream.isPaused()
+                ) {
+                    sourceStream.resume();
+                }
+            };
+
+            const onFileDrain = () => {
+                waitingFileDrain = false;
+                maybeResumeSource();
+            };
+
+            const onPlaybackDrain = () => {
+                waitingPlaybackDrain = false;
+                maybeResumeSource();
+            };
+
+            const onPlaybackClose = () => {
+                waitingPlaybackDrain = false;
+                maybeResumeSource();
+            };
+
+            const detachDrainListeners = () => {
+                fileStream.off("drain", onFileDrain);
+                playbackStream?.off("drain", onPlaybackDrain);
+                playbackStream?.off("close", onPlaybackClose);
+            };
+
+            fileStream.on("drain", onFileDrain);
+            playbackStream?.on("drain", onPlaybackDrain);
+            playbackStream?.once("close", onPlaybackClose);
+
             const cleanupFailure = async () => {
                 if (finished) return;
                 finished = true;
+                detachDrainListeners();
                 this.inFlight.delete(hash);
                 fileStream.destroy();
                 await unlink(partPath).catch(() => undefined);
@@ -252,15 +296,22 @@ export class DiskAudioCache {
 
             sourceStream.on("data", (chunk: Buffer) => {
                 totalBytes += chunk.length;
-                if (!fileStream.destroyed) {
-                    fileStream.write(chunk);
+                if (!fileStream.destroyed && !fileStream.closed) {
+                    if (!fileStream.write(chunk) && !waitingFileDrain) {
+                        waitingFileDrain = true;
+                        sourceStream.pause();
+                    }
                 }
-                if (playbackStream && !playbackStream.destroyed) {
-                    playbackStream.write(chunk);
+                if (playbackStream && !playbackStream.destroyed && !playbackStream.writableEnded) {
+                    if (!playbackStream.write(chunk) && !waitingPlaybackDrain) {
+                        waitingPlaybackDrain = true;
+                        sourceStream.pause();
+                    }
                 }
             });
 
             sourceStream.once("end", async () => {
+                detachDrainListeners();
                 if (playbackStream && !playbackStream.destroyed) {
                     playbackStream.end();
                 }
@@ -305,6 +356,7 @@ export class DiskAudioCache {
             });
 
             sourceStream.once("error", (err) => {
+                detachDrainListeners();
                 if (playbackStream && !playbackStream.destroyed) {
                     playbackStream.destroy(err);
                 }

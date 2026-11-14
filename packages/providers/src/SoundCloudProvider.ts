@@ -7,7 +7,12 @@ import {
 } from "@rawon/shared";
 import type { ClassifiedQuery, MediaProvider, ProviderHealth, QueryKind } from "./interfaces.js";
 import { classifyQuery } from "./QueryClassifier.js";
-import { extractBestAudioFormat, type YtDlpClient, type YtDlpEntry } from "./YtDlpClient.js";
+import {
+    extractBestAudioFormat,
+    isHlsFormat,
+    type YtDlpClient,
+    type YtDlpEntry,
+} from "./YtDlpClient.js";
 
 function positiveDuration(val: unknown): number {
     return typeof val === "number" && Number.isFinite(val) && val > 0 ? Math.floor(val) : 0;
@@ -141,6 +146,7 @@ export class SoundCloudProvider implements MediaProvider {
         const codec = fmt.acodec?.toLowerCase();
         const container = fmt.ext?.toLowerCase();
         const passthrough =
+            !isHlsFormat(fmt) &&
             Boolean(codec?.includes("opus")) &&
             (container === "ogg" || container === "opus") &&
             fmt.asr === 48_000 &&

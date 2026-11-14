@@ -215,10 +215,14 @@ export class ProviderRegistry {
                 "Primary stream resolution failed; trying fallback provider",
             );
 
-            const altSearch = await this.search(fallbackQuery, targetAlt, 3, "direct").catch(
+            const altSearch = await this.search(fallbackQuery, targetAlt, 5, "direct").catch(
                 () => null,
             );
-            const candidate = altSearch?.items[0];
+            // When falling back to SoundCloud, skip 30-second Go+ preview snippets if a full-length track exists
+            const candidate =
+                (targetAlt === "soundcloud"
+                    ? altSearch?.items.find((item) => item.duration === 0 || item.duration > 35)
+                    : undefined) ?? altSearch?.items[0];
             if (!candidate) {
                 throw primaryErr;
             }

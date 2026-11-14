@@ -155,7 +155,15 @@ export class ProcessSupervisor {
 
         child.once("error", (err) => {
             cleanup();
-            throw new AudioEngineError(`Process ${id} spawn error: ${err.message}`, false, err);
+            const wrapped = new AudioEngineError(
+                `Process ${id} spawn error: ${err.message}`,
+                false,
+                err,
+            );
+            this.logger?.error({ err: wrapped, id }, "Managed child process failed to spawn");
+            if (child.stdout && !child.stdout.destroyed) {
+                child.stdout.destroy(wrapped);
+            }
         });
 
         return handle;
