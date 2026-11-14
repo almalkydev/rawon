@@ -245,6 +245,7 @@ export class DiskAudioCache {
 
         const completion = new Promise<CachedAudioMetadata | null>((resolve) => {
             let finished = false;
+            let fileFailed = false;
             let waitingFileDrain = false;
             let waitingPlaybackDrain = false;
 
@@ -284,19 +285,38 @@ export class DiskAudioCache {
             playbackStream?.on("drain", onPlaybackDrain);
             playbackStream?.once("close", onPlaybackClose);
 
+            const cleanupFileOnly = async () => {
+                fileFailed = true;
+                waitingFileDrain = false;
+                fileStream.off("drain", onFileDrain);
+                fileStream.destroy();
+                this.inFlight.delete(hash);
+                maybeResumeSource();
+                await unlink(partPath).catch(() => undefined);
+                if (!finished) {
+                    finished = true;
+                    resolve(null);
+                }
+            };
+
             const cleanupFailure = async () => {
-                if (finished) return;
-                finished = true;
+                fileFailed = true;
+                waitingFileDrain = false;
+                waitingPlaybackDrain = false;
                 detachDrainListeners();
                 this.inFlight.delete(hash);
                 fileStream.destroy();
+                maybeResumeSource();
                 await unlink(partPath).catch(() => undefined);
-                resolve(null);
+                if (!finished) {
+                    finished = true;
+                    resolve(null);
+                }
             };
 
             sourceStream.on("data", (chunk: Buffer) => {
                 totalBytes += chunk.length;
-                if (!fileStream.destroyed && !fileStream.closed) {
+                if (!fileFailed && !fileStream.destroyed && !fileStream.closed) {
                     if (!fileStream.write(chunk) && !waitingFileDrain) {
                         waitingFileDrain = true;
                         sourceStream.pause();
@@ -315,7 +335,7 @@ export class DiskAudioCache {
                 if (playbackStream && !playbackStream.destroyed) {
                     playbackStream.end();
                 }
-                if (finished) return;
+                if (finished || fileFailed) return;
                 fileStream.end(async () => {
                     finished = true;
                     this.inFlight.delete(hash);
@@ -364,7 +384,7 @@ export class DiskAudioCache {
             });
 
             fileStream.once("error", () => {
-                void cleanupFailure();
+                void cleanupFileOnly();
             });
         });
 

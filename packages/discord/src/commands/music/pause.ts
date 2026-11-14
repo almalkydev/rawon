@@ -57,8 +57,11 @@ export const pauseCommand: CommandDefinition = {
             return;
         }
 
+        await ctx.defer();
         await ctx.activeSession.pause();
-        await ctx.services.syncRequestChannelPlayer(ctx.guild.id, ctx.activeSession.botId);
+        void ctx.services
+            .syncRequestChannelPlayer(ctx.guild.id, ctx.activeSession.botId)
+            .catch(() => undefined);
         await ctx.reply(
             buildNoticeContainer({
                 colorHex: botSettings.embedColor,

@@ -17,8 +17,64 @@ import type {
     VoiceMemberInfo,
     VoiceTransport,
 } from "@rawon/music-core";
-import type { Logger } from "@rawon/shared";
+import { AudioEngineError, type Logger } from "@rawon/shared";
 import { ChannelType, type Client, type VoiceBasedChannel } from "discord.js";
+
+export async function ensureStageSpeakerForChannel(
+    client: Client,
+    guildId: string,
+    channelId: string,
+    logger?: Logger,
+): Promise<void> {
+    try {
+        const guild = client.guilds.cache.get(guildId) ?? (await client.guilds.fetch(guildId));
+        const channel =
+            guild.channels.cache.get(channelId) ?? (await guild.channels.fetch(channelId));
+        if (!channel || channel.type !== ChannelType.GuildStageVoice) return;
+
+        const me = guild.members.me ?? (await guild.members.fetchMe());
+        if (!me.voice.suppress) return;
+
+        await me.voice.setSuppressed(false).catch(async () => {
+            await me.voice.setRequestToSpeak(true).catch(() => undefined);
+        });
+    } catch (err) {
+        logger?.debug({ err, guildId, channelId }, "Stage speaker promotion failed");
+    }
+}
+
+export async function setVoiceChannelStatusForChannel(
+    client: Client,
+    channelId: string,
+    status: string | null,
+): Promise<void> {
+    try {
+        await client.rest.put(`/channels/${channelId}/voice-status`, {
+            body: { status: status ?? "" },
+        });
+    } catch {
+        // Ignored intentionally: bots may lack SetVoiceChannelStatus permission in some servers
+    }
+}
+
+export async function getVoiceChannelMemberInfos(
+    client: Client,
+    guildId: string,
+    channelId: string,
+): Promise<VoiceMemberInfo[]> {
+    try {
+        const guild = client.guilds.cache.get(guildId) ?? (await client.guilds.fetch(guildId));
+        const channel = guild.channels.cache.get(channelId) as VoiceBasedChannel | undefined;
+        if (!channel || !("members" in channel)) return [];
+        return Array.from(channel.members.values()).map((member) => ({
+            userId: member.id,
+            isBot: member.user.bot,
+            deafened: Boolean(member.voice.deaf || member.voice.selfDeaf),
+        }));
+    } catch {
+        return [];
+    }
+}
 
 export class DiscordVoiceTransport implements VoiceTransport {
     private readonly client: Client;
@@ -30,6 +86,7 @@ export class DiscordVoiceTransport implements VoiceTransport {
     private activeFinishCallback: ((reason: PlaybackFinishReason, err?: Error) => void) | null =
         null;
     private activePlaybackToken = 0;
+    private startupWakeup: (() => void) | null = null;
 
     public constructor(options: { client: Client; logger?: Logger }) {
         this.client = options.client;
@@ -43,9 +100,10 @@ export class DiscordVoiceTransport implements VoiceTransport {
 
         this.player.on("error", (err) => {
             const cb = this.activeFinishCallback;
+            if (!cb) return;
             this.activeFinishCallback = null;
             void this.cleanupPrepared().finally(() => {
-                cb?.("error", err instanceof Error ? err : new Error(String(err)));
+                cb("error", err instanceof Error ? err : new Error(String(err)));
             });
         });
 
@@ -57,20 +115,45 @@ export class DiscordVoiceTransport implements VoiceTransport {
                 cb("ended");
             });
         });
+
+        this.player.on(AudioPlayerStatus.AutoPaused, () => {
+            if (
+                this.connection &&
+                this.connection.state.status === VoiceConnectionStatus.Ready &&
+                this.connection.state.subscription?.player !== this.player
+            ) {
+                this.connection.subscribe(this.player);
+            }
+        });
     }
 
     public async connect(guildId: string, channelId: string): Promise<void> {
-        const guild = await this.client.guilds.fetch(guildId);
         if (
             this.connection &&
             this.connection.state.status !== VoiceConnectionStatus.Destroyed &&
             this.currentChannelId === channelId
         ) {
+            let reusable = true;
             if (this.connection.state.status !== VoiceConnectionStatus.Ready) {
-                await entersState(this.connection, VoiceConnectionStatus.Ready, 15_000);
+                try {
+                    await entersState(this.connection, VoiceConnectionStatus.Ready, 15_000);
+                } catch {
+                    reusable = false;
+                }
             }
-            return;
+            if (reusable && this.connection.state.status === VoiceConnectionStatus.Ready) {
+                if (
+                    !this.connection.state.subscription ||
+                    this.connection.state.subscription.player !== this.player
+                ) {
+                    this.connection.subscribe(this.player);
+                }
+                return;
+            }
         }
+
+        const guild =
+            this.client.guilds.cache.get(guildId) ?? (await this.client.guilds.fetch(guildId));
 
         if (this.connection && this.connection.state.status !== VoiceConnectionStatus.Destroyed) {
             this.connection.destroy();
@@ -135,6 +218,7 @@ export class DiscordVoiceTransport implements VoiceTransport {
     ): Promise<void> {
         const token = ++this.activePlaybackToken;
         this.activeFinishCallback = null;
+        this.startupWakeup?.();
 
         let earlyStreamError: Error | null = null;
         const onEarlyStreamError = (err: Error) => {
@@ -152,8 +236,7 @@ export class DiscordVoiceTransport implements VoiceTransport {
         if (earlyStreamError) {
             prepared.stream.off("error", onEarlyStreamError);
             await prepared.cleanup().catch(() => undefined);
-            onFinished("error", earlyStreamError);
-            return;
+            throw earlyStreamError;
         }
 
         this.currentPrepared = prepared;
@@ -167,15 +250,103 @@ export class DiscordVoiceTransport implements VoiceTransport {
         });
         prepared.stream.off("error", onEarlyStreamError);
 
+        if (
+            this.connection &&
+            this.connection.state.status === VoiceConnectionStatus.Ready &&
+            (!this.connection.state.subscription ||
+                this.connection.state.subscription.player !== this.player)
+        ) {
+            this.connection.subscribe(this.player);
+        }
+
+        let startupPhase: "waiting" | "started" | "failed" = "waiting";
+        let pendingStartupFailure: Error | null = null;
+        let startupNotify: ((err?: Error | null) => void) | null = null;
+
         this.activeFinishCallback = (reason, err) => {
             if (token !== this.activePlaybackToken) return;
+            if (startupPhase === "failed") return;
+            if (startupPhase === "waiting") {
+                startupPhase = "failed";
+                pendingStartupFailure =
+                    err ?? new AudioEngineError("Stream ended before audio playback started", true);
+                startupNotify?.(pendingStartupFailure);
+                return;
+            }
             onFinished(reason, err);
         };
 
         this.player.play(resource);
-        await entersState(this.player, AudioPlayerStatus.Playing, 15_000).catch((err) => {
-            this.logger?.debug({ err }, "AudioPlayer did not enter Playing state within 15s");
-        });
+
+        try {
+            if (this.player.state.status !== AudioPlayerStatus.Playing) {
+                if (pendingStartupFailure) {
+                    throw pendingStartupFailure;
+                }
+                await new Promise<void>((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        cleanupWaiters();
+                        reject(
+                            new AudioEngineError(
+                                "AudioPlayer did not enter Playing state within 12s",
+                                true,
+                            ),
+                        );
+                    }, 12_000);
+                    timeout.unref?.();
+
+                    const onPlaying = () => {
+                        cleanupWaiters();
+                        resolve();
+                    };
+
+                    const cleanupWaiters = () => {
+                        clearTimeout(timeout);
+                        this.player.off(AudioPlayerStatus.Playing, onPlaying);
+                        startupNotify = null;
+                        this.startupWakeup = null;
+                    };
+
+                    startupNotify = (err) => {
+                        cleanupWaiters();
+                        if (err) {
+                            reject(err);
+                        } else {
+                            resolve();
+                        }
+                    };
+
+                    this.startupWakeup = () => {
+                        cleanupWaiters();
+                        resolve();
+                    };
+
+                    this.player.once(AudioPlayerStatus.Playing, onPlaying);
+                });
+            }
+
+            if (token !== this.activePlaybackToken) {
+                startupPhase = "failed";
+                return;
+            }
+            if (pendingStartupFailure) {
+                throw pendingStartupFailure;
+            }
+            startupPhase = "started";
+            this.activeFinishCallback = (reason, err) => {
+                if (token !== this.activePlaybackToken) return;
+                onFinished(reason, err);
+            };
+        } catch (err) {
+            startupPhase = "failed";
+            if (token !== this.activePlaybackToken) {
+                return;
+            }
+            this.activeFinishCallback = null;
+            this.player.stop(true);
+            await this.cleanupPrepared();
+            throw err instanceof Error ? err : new AudioEngineError(String(err), true);
+        }
     }
 
     public async pause(): Promise<boolean> {
@@ -189,6 +360,7 @@ export class DiscordVoiceTransport implements VoiceTransport {
     public async stop(): Promise<void> {
         this.activePlaybackToken += 1;
         this.activeFinishCallback = null;
+        this.startupWakeup?.();
         this.player.stop(true);
         await this.cleanupPrepared();
     }
@@ -212,22 +384,7 @@ export class DiscordVoiceTransport implements VoiceTransport {
     }
 
     public async ensureStageSpeaker(guildId: string, channelId: string): Promise<void> {
-        try {
-            const guild =
-                this.client.guilds.cache.get(guildId) ?? (await this.client.guilds.fetch(guildId));
-            const channel =
-                guild.channels.cache.get(channelId) ?? (await guild.channels.fetch(channelId));
-            if (!channel || channel.type !== ChannelType.GuildStageVoice) return;
-
-            const me = guild.members.me ?? (await guild.members.fetchMe());
-            if (!me.voice.suppress) return;
-
-            await me.voice.setSuppressed(false).catch(async () => {
-                await me.voice.setRequestToSpeak(true).catch(() => undefined);
-            });
-        } catch (err) {
-            this.logger?.debug({ err, guildId, channelId }, "Stage speaker promotion failed");
-        }
+        await ensureStageSpeakerForChannel(this.client, guildId, channelId, this.logger);
     }
 
     public async setVoiceChannelStatus(
@@ -235,32 +392,14 @@ export class DiscordVoiceTransport implements VoiceTransport {
         channelId: string,
         status: string | null,
     ): Promise<void> {
-        try {
-            await this.client.rest.put(`/channels/${channelId}/voice-status`, {
-                body: { status: status ?? "" },
-            });
-        } catch {
-            // Ignored intentionally: bots may lack SetVoiceChannelStatus permission in some servers
-        }
+        await setVoiceChannelStatusForChannel(this.client, channelId, status);
     }
 
     public async getVoiceChannelMembers(
         guildId: string,
         channelId: string,
     ): Promise<VoiceMemberInfo[]> {
-        try {
-            const guild =
-                this.client.guilds.cache.get(guildId) ?? (await this.client.guilds.fetch(guildId));
-            const channel = guild.channels.cache.get(channelId) as VoiceBasedChannel | undefined;
-            if (!channel || !("members" in channel)) return [];
-            return Array.from(channel.members.values()).map((member) => ({
-                userId: member.id,
-                isBot: member.user.bot,
-                deafened: Boolean(member.voice.deaf || member.voice.selfDeaf),
-            }));
-        } catch {
-            return [];
-        }
+        return getVoiceChannelMemberInfos(this.client, guildId, channelId);
     }
 
     public getHealth(_guildId: string): VoiceConnectionHealth {

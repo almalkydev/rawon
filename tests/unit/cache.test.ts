@@ -120,6 +120,44 @@ describe("MemoryLruCache, DiskAudioCache & PrefetchCoordinator", () => {
         expect(disk.has("yt:stream1")).toBe(true);
     });
 
+    it("keeps tee playbackStream alive and drains source even if fileStream write fails", async () => {
+        const dir = makeTempDir("rawon-cache-fail-");
+        const disk = new DiskAudioCache({
+            cacheDir: dir,
+            maxBytes: 1024 * 1024,
+            maxFiles: 10,
+            minValidBytes: 16,
+        });
+        await disk.initialize();
+        // Remove cacheDir after initialization so createWriteStream fails asynchronously
+        rmSync(dir, { recursive: true, force: true });
+
+        const source = new PassThrough();
+        const { playbackStream, completion } = await disk.cacheFromStream(
+            "yt:stream-fail",
+            source,
+            { container: "webm", codec: "opus", sampleRate: 48_000, channels: 2 },
+            { teeToPlayback: true },
+        );
+
+        const chunks: Buffer[] = [];
+        const playbackDone = new Promise<void>((resolve, reject) => {
+            playbackStream?.on("data", (chunk: Buffer) => chunks.push(chunk));
+            playbackStream?.once("end", resolve);
+            playbackStream?.once("error", reject);
+        });
+
+        const payload = Buffer.alloc(128, 0x3c);
+        source.write(payload.subarray(0, 64));
+        await new Promise((r) => setTimeout(r, 25));
+        source.end(payload.subarray(64));
+
+        const [meta] = await Promise.all([completion, playbackDone]);
+        expect(meta).toBeNull();
+        expect(Buffer.concat(chunks)).toEqual(payload);
+        expect(disk.has("yt:stream-fail")).toBe(false);
+    });
+
     it("bounds concurrent prefetch jobs and supports abort cancellation", async () => {
         const coordinator = new PrefetchCoordinator({ maxConcurrency: 2 });
         let peakActive = 0;

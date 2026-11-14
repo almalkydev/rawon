@@ -158,7 +158,11 @@ export class TrackQueue extends EventEmitter {
             const entry = slice[i];
             if (!entry) continue;
             this.sequence += 1;
-            const key = entry.key ?? `trk_${Date.now().toString(36)}_${this.sequence}`;
+            let key = entry.key ?? `trk_${Date.now().toString(36)}_${this.sequence}`;
+            while (!entry.key && this.items.has(key)) {
+                this.sequence += 1;
+                key = `trk_${Date.now().toString(36)}_${this.sequence}`;
+            }
             const index = entry.index ?? currentMaxIndex + i + 1;
             const queued: QueuedTrack = {
                 key,
@@ -190,6 +194,11 @@ export class TrackQueue extends EventEmitter {
             this.items.set(item.key, { ...item });
             if (item.index > maxSeq) {
                 maxSeq = item.index;
+            }
+            const suffixMatch = /_(\d+)$/.exec(item.key);
+            const suffixNum = suffixMatch ? Number.parseInt(suffixMatch[1] ?? "0", 10) : 0;
+            if (Number.isFinite(suffixNum) && suffixNum > maxSeq) {
+                maxSeq = suffixNum;
             }
         }
         this.sequence = maxSeq;

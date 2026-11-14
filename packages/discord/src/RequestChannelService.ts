@@ -124,6 +124,7 @@ export class RequestChannelService {
     private readonly providers: ProviderRegistry;
     private readonly sessions: SessionManager;
     private readonly updater = new PlayerMessageUpdater();
+    private readonly messageCache = new Map<string, Message>();
     private readonly logger?: Logger;
 
     public constructor(options: {
@@ -255,26 +256,39 @@ export class RequestChannelService {
         const collectedTracks: Track[] = [...parsed.attachmentTracks];
         const errors: string[] = [];
 
-        for (const q of parsed.queries) {
-            try {
-                const result = await this.providers.search(
-                    q,
-                    "youtube",
-                    1,
-                    botSettings.searchProvider,
-                );
-                if (result.items.length === 0) {
-                    errors.push(q);
-                    continue;
+        const resolvedQueries = await Promise.all(
+            parsed.queries.map(async (q) => {
+                try {
+                    const result = await this.providers.search(
+                        q,
+                        "youtube",
+                        1,
+                        botSettings.searchProvider,
+                    );
+                    if (result.items.length === 0) {
+                        return { query: q, tracks: [] as Track[], failed: true };
+                    }
+                    const matched = result.playlist
+                        ? result.items
+                        : result.items[0]
+                          ? [result.items[0]]
+                          : [];
+                    return { query: q, tracks: matched, failed: matched.length === 0 };
+                } catch (err) {
+                    this.logger?.debug(
+                        { err, query: q },
+                        "Request channel query resolution failed",
+                    );
+                    return { query: q, tracks: [] as Track[], failed: true };
                 }
-                if (result.playlist) {
-                    collectedTracks.push(...result.items);
-                } else if (result.items[0]) {
-                    collectedTracks.push(result.items[0]);
-                }
-            } catch (err) {
-                this.logger?.debug({ err, query: q }, "Request channel query resolution failed");
-                errors.push(q);
+            }),
+        );
+
+        for (const entry of resolvedQueries) {
+            if (entry.failed) {
+                errors.push(entry.query);
+            } else {
+                collectedTracks.push(...entry.tracks);
             }
         }
 
@@ -343,7 +357,9 @@ export class RequestChannelService {
         const list = await this.store.getRequestChannelsForGuild(guildId);
         for (const rc of list) {
             if (rc.channelId === channelId && rc.messageId === messageId) {
-                this.updater.invalidate(`${guildId}:${rc.botId}`);
+                const key = `${guildId}:${rc.botId}`;
+                this.updater.invalidate(key);
+                this.messageCache.delete(key);
                 await this.store.setRequestChannel({
                     ...rc,
                     messageId: null,
@@ -360,7 +376,7 @@ export class RequestChannelService {
         t: ScopedTranslator;
     }): void {
         const key = `${params.guildId}:${params.botId}`;
-        this.updater.schedule(key, 800, async () => {
+        this.updater.schedule(key, 350, async () => {
             await this.syncPlayerMessage(params);
         });
     }
@@ -413,25 +429,36 @@ export class RequestChannelService {
 
         const key = `${params.guildId}:${params.botId}`;
         const textChan = channel as TextBasedChannel & {
-            messages?: { fetch: (id: string) => Promise<Message> };
+            messages?: {
+                cache?: { get: (id: string) => Message | undefined };
+                fetch: (id: string) => Promise<Message>;
+            };
             send?: (opts: unknown) => Promise<Message>;
         };
 
         if (rc.messageId && textChan.messages) {
-            const existingMsg = await textChan.messages.fetch(rc.messageId).catch(() => null);
+            const cached = this.messageCache.get(key);
+            const existingMsg =
+                cached && cached.id === rc.messageId && cached.channelId === rc.channelId
+                    ? cached
+                    : (textChan.messages.cache?.get(rc.messageId) ??
+                      (await textChan.messages.fetch(rc.messageId).catch(() => null)));
             if (existingMsg) {
+                this.messageCache.set(key, existingMsg);
                 const ok = await this.updater.editMessageIfChanged(
                     key,
                     existingMsg,
                     payload as never,
                 );
                 if (ok) return;
+                this.messageCache.delete(key);
             }
         }
 
         if ("send" in channel && typeof channel.send === "function") {
             const posted = await channel.send(payload as never).catch(() => null);
             if (posted) {
+                this.messageCache.set(key, posted);
                 await this.store.setRequestChannel({
                     ...rc,
                     messageId: posted.id,

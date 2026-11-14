@@ -10,6 +10,7 @@ import type { ClassifiedQuery, MediaProvider, ProviderHealth, QueryKind } from "
 import { classifyQuery, extractYouTubeVideoId, isYouTubeMusicUrl } from "./QueryClassifier.js";
 import {
     isHlsFormat,
+    ResolvedEntryCache,
     selectPlayableFormatFromEntry,
     type YtDlpClient,
     type YtDlpEntry,
@@ -75,6 +76,7 @@ function mapEntryToTrack(
 
 export class YouTubeProvider implements MediaProvider {
     public readonly name = "youtube" as const;
+    private readonly entryCache = new ResolvedEntryCache();
 
     public constructor(private readonly ytdlp: YtDlpClient) {}
 
@@ -156,6 +158,9 @@ export class YouTubeProvider implements MediaProvider {
         }
 
         const single = mapEntryToTrack(dump, isYtm ? "youtubemusic" : undefined);
+        if (single) {
+            this.entryCache.store([url, single.url, single.playableUrl, single.id], dump);
+        }
         return {
             type: "results",
             items: single ? [single] : [],
@@ -168,6 +173,7 @@ export class YouTubeProvider implements MediaProvider {
         }
         const sourceUrl = track.playableUrl || track.url;
         const dump = await this.ytdlp.dumpJson(sourceUrl, { noPlaylist: true });
+        this.entryCache.store([sourceUrl, track.url, track.id], dump);
         const hydrated = mapEntryToTrack(
             dump,
             track.provider === "youtubemusic" ? "youtubemusic" : undefined,
@@ -198,17 +204,33 @@ export class YouTubeProvider implements MediaProvider {
         let fmt: YtDlpFormatEntry | null = null;
         let primaryErr: unknown = null;
 
-        try {
-            entry = await this.ytdlp.dumpJson(target, {
-                noPlaylist: true,
-                format: "bestaudio[acodec=opus]/bestaudio/best",
-                signal,
-            });
-            fmt = await selectPlayableFormatFromEntry(entry, signal);
-        } catch (err) {
-            primaryErr = err;
-            if (err instanceof ProviderError && err.category === "age_restricted") {
-                throw err;
+        const cacheKeys = [target, track.url, track.id];
+        const cachedEntry = this.entryCache.get(cacheKeys);
+        if (cachedEntry) {
+            entry = cachedEntry;
+            fmt = await selectPlayableFormatFromEntry(cachedEntry, signal);
+            if (!fmt?.url) {
+                this.entryCache.delete(cacheKeys);
+                entry = null;
+            }
+        }
+
+        if (!fmt?.url && !signal?.aborted) {
+            try {
+                entry = await this.ytdlp.dumpJson(target, {
+                    noPlaylist: true,
+                    format: "bestaudio[acodec=opus]/bestaudio/best",
+                    signal,
+                });
+                fmt = await selectPlayableFormatFromEntry(entry, signal);
+                if (fmt?.url && entry) {
+                    this.entryCache.store(cacheKeys, entry);
+                }
+            } catch (err) {
+                primaryErr = err;
+                if (err instanceof ProviderError && err.category === "age_restricted") {
+                    throw err;
+                }
             }
         }
 

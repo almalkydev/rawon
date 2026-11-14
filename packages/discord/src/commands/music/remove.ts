@@ -79,7 +79,7 @@ export const removeCommand: CommandDefinition = {
             return;
         }
 
-        const view = ctx.activeSession.queue.getAll();
+        const view = ctx.activeSession.queue.getView();
         const isStaffOrDj = canControlPlayback({
             member: ctx.member,
             guildConfig,
@@ -102,8 +102,11 @@ export const removeCommand: CommandDefinition = {
             }
         }
 
+        await ctx.defer();
         const { removed, currentRemoved } = await ctx.activeSession.removeByPositions(positions);
-        await ctx.services.syncRequestChannelPlayer(ctx.guild.id, ctx.activeSession.botId);
+        void ctx.services
+            .syncRequestChannelPlayer(ctx.guild.id, ctx.activeSession.botId)
+            .catch(() => undefined);
 
         const prefixMsg = currentRemoved ? ctx.t("commands.music.remove.songSkip") : "";
         await ctx.reply(

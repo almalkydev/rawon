@@ -98,6 +98,21 @@ export const skipToCommand: CommandDefinition = {
             return;
         }
 
+        const view = ctx.activeSession.queue.getView();
+        const targetIndex =
+            target === "first" ? 0 : target === "last" ? view.length - 1 : target - 1;
+        if (!view[targetIndex]) {
+            await ctx.reply(
+                buildNoticeContainer({
+                    colorHex: botSettings.embedColor,
+                    description: `${botSettings.noEmoji} ${ctx.t("commands.music.skipTo.noSongPosition")}`,
+                }),
+                true,
+            );
+            return;
+        }
+
+        await ctx.defer();
         const jumped = await ctx.activeSession.skipTo(target);
         if (!jumped) {
             await ctx.reply(
@@ -110,7 +125,9 @@ export const skipToCommand: CommandDefinition = {
             return;
         }
 
-        await ctx.services.syncRequestChannelPlayer(ctx.guild.id, ctx.activeSession.botId);
+        void ctx.services
+            .syncRequestChannelPlayer(ctx.guild.id, ctx.activeSession.botId)
+            .catch(() => undefined);
         await ctx.reply(
             buildNoticeContainer({
                 colorHex: botSettings.embedColor,

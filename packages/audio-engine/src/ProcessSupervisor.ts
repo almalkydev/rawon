@@ -110,8 +110,8 @@ export class ProcessSupervisor {
                             // ignore
                         }
                     }
-                    setTimeout(done, 100).unref?.();
-                }, 1_000);
+                    setTimeout(done, 50).unref?.();
+                }, 250);
                 forceTimer.unref?.();
             });
         };

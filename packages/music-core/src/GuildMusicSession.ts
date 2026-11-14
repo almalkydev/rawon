@@ -131,6 +131,8 @@ export class GuildMusicSession extends EventEmitter {
     private playbackGeneration = 0;
     private recoveryAttemptsForTrack = 0;
     private lastRecoveryKey: string | null = null;
+    private transportActive = false;
+    private persistChain: Promise<void> = Promise.resolve();
 
     private emptyVcTimer: NodeJS.Timeout | null = null;
     private positionSaveTimer: NodeJS.Timeout | null = null;
@@ -245,9 +247,14 @@ export class GuildMusicSession extends EventEmitter {
         requesterTag?: string;
         playImmediately?: boolean;
     }): Promise<{ added: QueuedTrack[]; startedImmediately: boolean }> {
+        if (inputs.playImmediately && inputs.tracks.length > 0 && !this.destroyed) {
+            this.preemptActivePlayback();
+        }
         return this.ops.enqueue(async () => {
             this.assertAlive();
-            const wasEmpty = this.queue.current === null && this.queue.size === 0;
+            const hadActiveCurrent = this.queue.current !== null;
+            const wasInactive =
+                !hadActiveCurrent || this.statusValue === "idle" || this.statusValue === "stopped";
             const added = this.queue.addMany(
                 inputs.tracks.map((track) => ({
                     track,
@@ -257,7 +264,7 @@ export class GuildMusicSession extends EventEmitter {
             );
 
             let startedImmediately = false;
-            if (wasEmpty || inputs.playImmediately) {
+            if ((wasInactive || inputs.playImmediately) && added.length > 0) {
                 const firstAdded = added[0];
                 if (inputs.playImmediately && firstAdded) {
                     this.queue.jumpToKey(firstAdded.key);
@@ -306,12 +313,18 @@ export class GuildMusicSession extends EventEmitter {
 
     public async pause(): Promise<boolean> {
         return this.ops.enqueue(async () => {
-            if (this.destroyed || this.pausedValue || !this.queue.current) {
+            if (
+                this.destroyed ||
+                this.pausedValue ||
+                !this.queue.current ||
+                this.statusValue === "idle" ||
+                this.statusValue === "stopped"
+            ) {
                 return false;
             }
             const currentPos = this.getPositionMs();
             const pausedOk = await this.transport.pause();
-            if (!pausedOk && this.currentPrepared) {
+            if (!pausedOk && this.statusValue !== "buffering") {
                 return false;
             }
             this.pausedAtPositionMs = currentPos;
@@ -320,15 +333,15 @@ export class GuildMusicSession extends EventEmitter {
             this.pausedValue = true;
             this.statusValue = "paused";
 
-            await this.store
-                .updateQueuePosition(
+            await this.enqueuePersist(() =>
+                this.store.updateQueuePosition(
                     this.guildId,
                     this.botId,
                     this.queue.currentKey,
                     currentPos,
                     true,
-                )
-                .catch(() => undefined);
+                ),
+            );
             this.scheduleStateEmit(true);
             return true;
         });
@@ -357,21 +370,24 @@ export class GuildMusicSession extends EventEmitter {
             this.pausedValue = false;
             this.statusValue = "playing";
 
-            await this.store
-                .updateQueuePosition(
+            await this.enqueuePersist(() =>
+                this.store.updateQueuePosition(
                     this.guildId,
                     this.botId,
                     this.queue.currentKey,
                     this.pausedAtPositionMs,
                     false,
-                )
-                .catch(() => undefined);
+                ),
+            );
             this.scheduleStateEmit(true);
             return true;
         });
     }
 
     public async skip(): Promise<{ skipped: QueuedTrack | null; next: QueuedTrack | null }> {
+        if (!this.destroyed) {
+            this.preemptActivePlayback();
+        }
         return this.ops.enqueue(async () => {
             this.assertAlive();
             const skipped = this.queue.current;
@@ -395,6 +411,9 @@ export class GuildMusicSession extends EventEmitter {
     }
 
     public async skipTo(target: "first" | "last" | number): Promise<QueuedTrack | null> {
+        if (!this.destroyed && this.canResolveJumpTarget(target)) {
+            this.preemptActivePlayback();
+        }
         return this.ops.enqueue(async () => {
             this.assertAlive();
             const targetTrack = this.queue.jumpToTarget(target);
@@ -408,6 +427,9 @@ export class GuildMusicSession extends EventEmitter {
     }
 
     public async previous(): Promise<QueuedTrack | null> {
+        if (!this.destroyed && this.queue.hasHistory()) {
+            this.preemptActivePlayback();
+        }
         return this.ops.enqueue(async () => {
             this.assertAlive();
             const prevTrack = this.queue.movePrevious();
@@ -594,7 +616,7 @@ export class GuildMusicSession extends EventEmitter {
 
             if (removedCurrent) {
                 await this.teardownCurrentAudio();
-                const next = this.queue.advance("skipped");
+                const next = this.queue.current;
                 if (next) {
                     await this.startCurrentTrack(0);
                 } else {
@@ -619,7 +641,7 @@ export class GuildMusicSession extends EventEmitter {
 
             if (removedCurrent) {
                 await this.teardownCurrentAudio();
-                const next = this.queue.advance("skipped");
+                const next = this.queue.current;
                 if (next) {
                     await this.startCurrentTrack(0);
                 } else {
@@ -634,9 +656,12 @@ export class GuildMusicSession extends EventEmitter {
     }
 
     public async stop(options: { leaveVoice?: boolean; clearQueue?: boolean } = {}): Promise<void> {
+        if (!this.destroyed) {
+            this.preemptActivePlayback();
+        }
         await this.ops.enqueue(async () => {
             if (this.destroyed) return;
-            await this.teardownCurrentAudio();
+            await this.teardownCurrentAudio(true);
             if (options.clearQueue !== false) {
                 this.queue.clear();
             }
@@ -654,9 +679,9 @@ export class GuildMusicSession extends EventEmitter {
             if (options.leaveVoice) {
                 await this.destroyInternal("stopped_by_user");
             } else {
-                await this.store
-                    .deleteQueueSession(this.guildId, this.botId)
-                    .catch(() => undefined);
+                await this.enqueuePersist(() =>
+                    this.store.deleteQueueSession(this.guildId, this.botId),
+                );
                 this.scheduleStateEmit(true);
             }
         });
@@ -726,6 +751,9 @@ export class GuildMusicSession extends EventEmitter {
     }
 
     public async destroy(reason = "destroyed"): Promise<void> {
+        if (!this.destroyed) {
+            this.preemptActivePlayback();
+        }
         await this.ops.enqueue(async () => {
             await this.destroyInternal(reason);
         });
@@ -740,14 +768,18 @@ export class GuildMusicSession extends EventEmitter {
         this.prefetch?.cancelAll();
 
         // Flush state cleanly if process shutting down; otherwise delete ephemeral queue
-        if (reason === "shutdown" && this.queue.size > 0) {
+        if (reason === "shutdown" && this.queue.size > 0 && this.queue.current !== null) {
             const pos = this.getPositionMs();
-            await this.savePersistedQueue(this.queue.currentKey, pos, true).catch(() => undefined);
+            await this.enqueuePersist(() =>
+                this.savePersistedQueue(this.queue.currentKey, pos, this.pausedValue),
+            );
         } else {
-            await this.store.deleteQueueSession(this.guildId, this.botId).catch(() => undefined);
+            await this.enqueuePersist(() =>
+                this.store.deleteQueueSession(this.guildId, this.botId),
+            );
         }
 
-        await this.teardownCurrentAudio();
+        await this.teardownCurrentAudio(true);
         await this.transport
             .setVoiceChannelStatus?.(this.guildId, this.voiceChannelId, null)
             .catch(() => undefined);
@@ -795,24 +827,49 @@ export class GuildMusicSession extends EventEmitter {
         this.activeAbortController = abortController;
 
         try {
-            await this.transport.connect(this.guildId, this.voiceChannelId);
-            await this.transport
-                .ensureStageSpeaker?.(this.guildId, this.voiceChannelId)
-                .catch(() => undefined);
+            const connectTask = (async () => {
+                await this.transport.connect(this.guildId, this.voiceChannelId);
+                await this.transport
+                    .ensureStageSpeaker?.(this.guildId, this.voiceChannelId)
+                    .catch(() => undefined);
+            })();
 
-            const hydrated = await this.providers
-                .hydrateTrack(queued.track)
-                .catch(() => queued.track);
-            if (generation !== this.playbackGeneration || this.destroyed) return;
-            queued.track = hydrated;
+            let durationUpdated = false;
+            const resolveTask = (async () => {
+                const track =
+                    queued.track.provider === "spotify"
+                        ? await this.providers.hydrateTrack(queued.track).catch(() => queued.track)
+                        : queued.track;
+                if (generation !== this.playbackGeneration || this.destroyed) {
+                    return null;
+                }
+                queued.track = track;
 
-            const canonicalKey = getCanonicalTrackKey(hydrated);
-            const descriptor = await this.resolvePlayableDescriptor(
-                hydrated,
-                canonicalKey,
-                abortController.signal,
-            );
-            if (generation !== this.playbackGeneration || this.destroyed) return;
+                const canonicalKey = getCanonicalTrackKey(track);
+                const descriptor = await this.resolvePlayableDescriptor(
+                    track,
+                    canonicalKey,
+                    abortController.signal,
+                );
+                if (
+                    track.duration <= 0 &&
+                    descriptor.durationSeconds &&
+                    descriptor.durationSeconds > 0
+                ) {
+                    queued.track = { ...track, duration: descriptor.durationSeconds };
+                    durationUpdated = true;
+                }
+                return { canonicalKey, descriptor };
+            })();
+
+            const prepareGroup = Promise.all([connectTask, resolveTask, this.persistQueueFull()]);
+            prepareGroup.catch(() => undefined);
+            const [, resolved] = await this.raceWithAbort(prepareGroup, abortController.signal);
+            if (!resolved || generation !== this.playbackGeneration || this.destroyed) return;
+            const { canonicalKey, descriptor } = resolved;
+            if (durationUpdated) {
+                void this.persistQueueFull();
+            }
 
             let teeSourceStream: Readable | undefined;
             if (descriptor.sourceType === "ytdlp") {
@@ -821,6 +878,7 @@ export class GuildMusicSession extends EventEmitter {
                 });
                 teeSourceStream = spawned.stream;
             } else if (
+                descriptor.directPassthroughEligible &&
                 this.botSettings.enableAudioCache &&
                 this.diskCache &&
                 !descriptor.cacheFilePath &&
@@ -868,9 +926,9 @@ export class GuildMusicSession extends EventEmitter {
 
             this.currentPrepared = prepared;
             this.pipelineMode = prepared.mode;
-            this.statusValue = "playing";
             this.segmentBaseMs = seekSeconds * 1000;
-            this.segmentStartedMonotonicMs = performance.now();
+            this.segmentStartedMonotonicMs = null;
+            this.transportActive = true;
 
             await this.transport.playStream(prepared, (reason, err) => {
                 if (generation !== this.playbackGeneration || this.destroyed) {
@@ -879,11 +937,18 @@ export class GuildMusicSession extends EventEmitter {
                 void this.onTrackTransportFinished(generation, queued, reason, err);
             });
 
-            await this.updateVoiceStatusFromTrack();
-            await this.persistQueueFull();
+            if (generation !== this.playbackGeneration || this.destroyed) {
+                return;
+            }
+
+            this.statusValue = "playing";
+            this.segmentBaseMs = seekSeconds * 1000;
+            this.segmentStartedMonotonicMs = performance.now();
+
             this.schedulePrefetchUpcoming();
             this.emit("trackStart", queued);
             this.scheduleStateEmit(true);
+            void this.updateVoiceStatusFromTrack();
         } catch (err) {
             if (
                 generation !== this.playbackGeneration ||
@@ -908,6 +973,10 @@ export class GuildMusicSession extends EventEmitter {
 
         await this.ops.enqueue(async () => {
             if (generation !== this.playbackGeneration || this.destroyed) return;
+
+            if (reason !== "stopped") {
+                this.transportActive = false;
+            }
 
             if (reason === "error") {
                 await this.handlePlaybackError(
@@ -1033,7 +1102,7 @@ export class GuildMusicSession extends EventEmitter {
 
             // Wait briefly if a prefetch download is almost done
             if (this.diskCache.isInProgress(canonicalKey)) {
-                const completed = await this.diskCache.waitForCompletion(canonicalKey, 2_500);
+                const completed = await this.diskCache.waitForCompletion(canonicalKey, 250);
                 if (completed) {
                     const hit = await this.diskCache.get(canonicalKey);
                     if (hit) {
@@ -1083,10 +1152,12 @@ export class GuildMusicSession extends EventEmitter {
         }
         let initialBody: import("node:stream/web").ReadableStream<Uint8Array> | null = null;
         try {
-            const initialRes = await fetch(descriptor.url, {
-                headers: descriptor.headers,
+            const initialRes = await this.fetchWithTimeout(
+                descriptor.url,
+                { headers: descriptor.headers },
                 signal,
-            });
+                8_000,
+            );
             if (
                 initialRes.status === 401 ||
                 initialRes.status === 403 ||
@@ -1204,7 +1275,11 @@ export class GuildMusicSession extends EventEmitter {
             while (!out.destroyed && !signal.aborted) {
                 try {
                     if (!activeReader) break;
-                    const { done, value } = await activeReader.read();
+                    const { done, value } = await this.readChunkWithTimeout(
+                        activeReader,
+                        12_000,
+                        signal,
+                    );
                     if (done) {
                         if (canResumeRanges && bytesRead > 0 && bytesRead < expectedTotalBytes) {
                             throw new Error(
@@ -1249,13 +1324,17 @@ export class GuildMusicSession extends EventEmitter {
                         return;
                     }
 
-                    const resumeRes = await fetch(descriptor.url, {
-                        headers: {
-                            ...descriptor.headers,
-                            Range: `bytes=${bytesRead}-`,
+                    const resumeRes = await this.fetchWithTimeout(
+                        descriptor.url,
+                        {
+                            headers: {
+                                ...descriptor.headers,
+                                Range: `bytes=${bytesRead}-`,
+                            },
                         },
                         signal,
-                    });
+                        8_000,
+                    );
                     if (
                         resumeRes.status === 401 ||
                         resumeRes.status === 403 ||
@@ -1287,18 +1366,24 @@ export class GuildMusicSession extends EventEmitter {
     }
 
     private schedulePrefetchUpcoming(): void {
-        const diskCache = this.diskCache;
-        if (!this.prefetch || !diskCache || !this.botSettings.enableAudioCache) {
+        if (!this.prefetch) {
             return;
         }
+        const diskCache = this.botSettings.enableAudioCache ? this.diskCache : undefined;
         const upcoming = this.queue.getUpcomingTracks(2);
         for (const item of upcoming) {
             const canonicalKey = getCanonicalTrackKey(item.track);
-            if (
-                item.track.isLive ||
-                diskCache.peekWithoutStats(canonicalKey) ||
-                diskCache.isInProgress(canonicalKey)
-            ) {
+            const existingDesc = this.activeDescriptorCache.get(canonicalKey);
+            const hasFreshDescriptor = Boolean(
+                existingDesc &&
+                    (!existingDesc.expiresAt || existingDesc.expiresAt > Date.now() + 30_000),
+            );
+            const hasDiskCache = Boolean(
+                diskCache &&
+                    (diskCache.peekWithoutStats(canonicalKey) ||
+                        diskCache.isInProgress(canonicalKey)),
+            );
+            if (item.track.isLive || (hasFreshDescriptor && (!diskCache || hasDiskCache))) {
                 continue;
             }
 
@@ -1306,13 +1391,30 @@ export class GuildMusicSession extends EventEmitter {
             this.prefetch.schedule({
                 key: taskKey,
                 run: async (signal) => {
-                    const hydrated = await this.providers
-                        .hydrateTrack(item.track)
-                        .catch(() => item.track);
-                    item.track = hydrated;
-                    const desc = await this.providers.getStreamDescriptor(hydrated, { signal });
-                    this.activeDescriptorCache.set(canonicalKey, desc);
-                    if (desc.isLive || desc.sourceType !== "url" || isHlsStreamDescriptor(desc)) {
+                    let track = item.track;
+                    if (track.provider === "spotify") {
+                        track = await this.providers.hydrateTrack(track).catch(() => track);
+                        item.track = track;
+                    }
+                    let desc = this.activeDescriptorCache.get(canonicalKey);
+                    if (!desc || (desc.expiresAt && desc.expiresAt <= Date.now() + 30_000)) {
+                        desc = await this.providers.getStreamDescriptor(track, { signal });
+                        this.activeDescriptorCache.set(canonicalKey, desc);
+                        if (
+                            track.duration <= 0 &&
+                            desc.durationSeconds &&
+                            desc.durationSeconds > 0
+                        ) {
+                            item.track = { ...track, duration: desc.durationSeconds };
+                        }
+                    }
+                    if (
+                        !diskCache ||
+                        hasDiskCache ||
+                        desc.isLive ||
+                        desc.sourceType !== "url" ||
+                        isHlsStreamDescriptor(desc)
+                    ) {
                         return;
                     }
 
@@ -1364,7 +1466,7 @@ export class GuildMusicSession extends EventEmitter {
         return this.queue.advance("ended");
     }
 
-    private async teardownCurrentAudio(): Promise<void> {
+    private async teardownCurrentAudio(forceTransportStop = false): Promise<void> {
         if (this.activeAbortController) {
             this.activeAbortController.abort();
             this.activeAbortController = null;
@@ -1373,12 +1475,19 @@ export class GuildMusicSession extends EventEmitter {
             this.activeCacheUnpin();
             this.activeCacheUnpin = null;
         }
+        const tasks: Promise<unknown>[] = [];
         if (this.currentPrepared) {
             const p = this.currentPrepared;
             this.currentPrepared = null;
-            await p.cleanup().catch(() => undefined);
+            tasks.push(p.cleanup().catch(() => undefined));
         }
-        await this.transport.stop().catch(() => undefined);
+        if (this.transportActive || forceTransportStop) {
+            this.transportActive = false;
+            tasks.push(this.transport.stop().catch(() => undefined));
+        }
+        if (tasks.length > 0) {
+            await Promise.all(tasks);
+        }
     }
 
     private async enterIdleState(): Promise<void> {
@@ -1392,7 +1501,7 @@ export class GuildMusicSession extends EventEmitter {
         await this.transport
             .setVoiceChannelStatus?.(this.guildId, this.voiceChannelId, null)
             .catch(() => undefined);
-        await this.store.deleteQueueSession(this.guildId, this.botId).catch(() => undefined);
+        await this.enqueuePersist(() => this.store.deleteQueueSession(this.guildId, this.botId));
         this.scheduleStateEmit(true);
     }
 
@@ -1410,13 +1519,12 @@ export class GuildMusicSession extends EventEmitter {
 
     private async persistQueueFull(): Promise<void> {
         if (this.destroyed) return;
-        await this.savePersistedQueue(
-            this.queue.currentKey,
-            this.getPositionMs(),
-            this.pausedValue,
-        ).catch((err) => {
-            this.logger?.debug({ err }, "Failed persisting queue session");
-        });
+        const currentTrackKey = this.queue.currentKey;
+        const positionMs = this.getPositionMs();
+        const paused = this.pausedValue;
+        await this.enqueuePersist(() =>
+            this.savePersistedQueue(currentTrackKey, positionMs, paused),
+        );
     }
 
     private async savePersistedQueue(
@@ -1460,16 +1568,23 @@ export class GuildMusicSession extends EventEmitter {
     private startBackgroundTimers(): void {
         // Persist playback position every 10 seconds while playing
         this.positionSaveTimer = setInterval(() => {
-            if (!this.destroyed && this.queue.current && !this.pausedValue) {
-                void this.store
-                    .updateQueuePosition(
+            if (
+                !this.destroyed &&
+                this.statusValue === "playing" &&
+                this.queue.current &&
+                !this.pausedValue
+            ) {
+                const trackKey = this.queue.currentKey;
+                const posMs = this.getPositionMs();
+                void this.enqueuePersist(() =>
+                    this.store.updateQueuePosition(
                         this.guildId,
                         this.botId,
-                        this.queue.currentKey,
-                        this.getPositionMs(),
+                        trackKey,
+                        posMs,
                         false,
-                    )
-                    .catch(() => undefined);
+                    ),
+                );
             }
         }, 10_000);
         this.positionSaveTimer.unref?.();
@@ -1504,5 +1619,134 @@ export class GuildMusicSession extends EventEmitter {
             clearTimeout(this.stateEmitTimer);
             this.stateEmitTimer = null;
         }
+    }
+
+    private preemptActivePlayback(): void {
+        this.playbackGeneration += 1;
+        if (this.activeAbortController) {
+            this.activeAbortController.abort();
+            this.activeAbortController = null;
+        }
+    }
+
+    private canResolveJumpTarget(target: "first" | "last" | number): boolean {
+        const view = this.queue.getView();
+        if (view.length === 0) {
+            return false;
+        }
+        if (target === "first" || target === "last") {
+            return true;
+        }
+        return Number.isInteger(target) && target >= 1 && target <= view.length;
+    }
+
+    private enqueuePersist(task: () => Promise<void>): Promise<void> {
+        const next = this.persistChain.then(task, task);
+        this.persistChain = next.catch((err) => {
+            this.logger?.debug({ err }, "Failed persisting queue session");
+        });
+        return this.persistChain;
+    }
+
+    private async raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+        if (signal.aborted) {
+            throw new Error("Playback operation aborted");
+        }
+        return await new Promise<T>((resolve, reject) => {
+            const onAbort = () => {
+                signal.removeEventListener("abort", onAbort);
+                reject(new Error("Playback operation aborted"));
+            };
+            signal.addEventListener("abort", onAbort, { once: true });
+            promise.then(
+                (val) => {
+                    signal.removeEventListener("abort", onAbort);
+                    resolve(val);
+                },
+                (err) => {
+                    signal.removeEventListener("abort", onAbort);
+                    reject(err);
+                },
+            );
+        });
+    }
+
+    private async fetchWithTimeout(
+        url: string,
+        init: RequestInit,
+        signal: AbortSignal,
+        timeoutMs: number,
+    ): Promise<Response> {
+        if (signal.aborted) {
+            throw new Error("Stream aborted");
+        }
+        const timeoutController = new AbortController();
+        const onParentAbort = () => {
+            timeoutController.abort(signal.reason);
+        };
+        signal.addEventListener("abort", onParentAbort, { once: true });
+        const timer = setTimeout(() => {
+            timeoutController.abort(
+                new Error(`HTTP stream connect timed out after ${timeoutMs}ms`),
+            );
+        }, timeoutMs);
+        timer.unref?.();
+        try {
+            return await fetch(url, {
+                ...init,
+                signal: timeoutController.signal,
+            });
+        } finally {
+            clearTimeout(timer);
+            signal.removeEventListener("abort", onParentAbort);
+        }
+    }
+
+    private async readChunkWithTimeout(
+        reader: ReadableStreamDefaultReader<Uint8Array>,
+        timeoutMs: number,
+        signal: AbortSignal,
+    ): Promise<Awaited<ReturnType<ReadableStreamDefaultReader<Uint8Array>["read"]>>> {
+        if (signal.aborted) {
+            throw new Error("Stream aborted");
+        }
+        return await new Promise<
+            Awaited<ReturnType<ReadableStreamDefaultReader<Uint8Array>["read"]>>
+        >((resolve, reject) => {
+            let settled = false;
+            const cleanup = () => {
+                clearTimeout(timer);
+                signal.removeEventListener("abort", onAbort);
+            };
+            const onAbort = () => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                reject(new Error("Stream aborted"));
+            };
+            const timer = setTimeout(() => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                reject(new Error(`HTTP audio stream read stalled after ${timeoutMs}ms`));
+            }, timeoutMs);
+            timer.unref?.();
+            signal.addEventListener("abort", onAbort, { once: true });
+
+            reader.read().then(
+                (result) => {
+                    if (settled) return;
+                    settled = true;
+                    cleanup();
+                    resolve(result);
+                },
+                (err) => {
+                    if (settled) return;
+                    settled = true;
+                    cleanup();
+                    reject(err);
+                },
+            );
+        });
     }
 }

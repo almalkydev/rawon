@@ -19,9 +19,29 @@ import { buildBotSettingsFromRaw } from "./MemoryStore.js";
 const { Pool } = pg;
 
 export class PostgresDatabaseStore implements DatabaseStore {
+    private static readonly CONFIG_CACHE_TTL_MS = 30_000;
+    private static readonly SETTINGS_CACHE_TTL_MS = 15_000;
+
     private readonly pool: pg.Pool;
     private readonly logger?: Logger;
     private readonly migrationsDir: string;
+    private readonly guildConfigCache = new Map<
+        string,
+        { value: GuildConfig; expiresAt: number }
+    >();
+    private readonly requestChannelCache = new Map<
+        string,
+        { value: RequestChannelConfig | null; expiresAt: number }
+    >();
+    private readonly requestChannelsGuildCache = new Map<
+        string,
+        { value: RequestChannelConfig[]; expiresAt: number }
+    >();
+    private botSettingsCache: { value: BotSettings; expiresAt: number } | null = null;
+    private rawBotSettingsCache: {
+        value: Record<string, string | null>;
+        expiresAt: number;
+    } | null = null;
 
     public constructor(options: {
         connectionString: string;
@@ -103,10 +123,48 @@ export class PostgresDatabaseStore implements DatabaseStore {
     }
 
     public async close(): Promise<void> {
+        this.guildConfigCache.clear();
+        this.requestChannelCache.clear();
+        this.requestChannelsGuildCache.clear();
+        this.invalidateBotSettingsCache();
         await this.pool.end();
     }
 
+    public invalidateBotSettingsCache(): void {
+        this.botSettingsCache = null;
+        this.rawBotSettingsCache = null;
+    }
+
+    public invalidateGuildConfigCache(guildId?: string): void {
+        if (guildId) {
+            this.guildConfigCache.delete(guildId);
+            return;
+        }
+        this.guildConfigCache.clear();
+    }
+
+    public invalidateRequestChannelCache(guildId?: string): void {
+        if (!guildId) {
+            this.requestChannelCache.clear();
+            this.requestChannelsGuildCache.clear();
+            return;
+        }
+        this.requestChannelsGuildCache.delete(guildId);
+        const prefix = `${guildId}:`;
+        for (const key of this.requestChannelCache.keys()) {
+            if (key.startsWith(prefix)) {
+                this.requestChannelCache.delete(key);
+            }
+        }
+    }
+
     public async getGuildConfig(guildId: string): Promise<GuildConfig> {
+        const now = Date.now();
+        const cached = this.guildConfigCache.get(guildId);
+        if (cached && cached.expiresAt > now) {
+            return structuredClone(cached.value);
+        }
+
         const defaults = createDefaultGuildConfig(guildId);
         const res = await this.pool.query<{
             guild_id: string;
@@ -121,19 +179,24 @@ export class PostgresDatabaseStore implements DatabaseStore {
         }>("SELECT * FROM guilds WHERE guild_id = $1", [guildId]);
 
         const row = res.rows[0];
-        if (!row) return defaults;
-
-        return {
-            guildId: row.guild_id,
-            prefix: row.prefix,
-            locale: row.locale,
-            djEnabled: Boolean(row.dj_enabled),
-            djRoleId: row.dj_role_id,
-            maxQueueSize: row.max_queue_size || defaults.maxQueueSize,
-            rcRateLimitMax: row.rc_rate_limit_max || defaults.rcRateLimitMax,
-            rcRateLimitWindowMs: row.rc_rate_limit_window_ms || defaults.rcRateLimitWindowMs,
-            rcExclusions: { ...defaults.rcExclusions, ...(row.rc_exclusions_json ?? {}) },
-        };
+        const result: GuildConfig = !row
+            ? defaults
+            : {
+                  guildId: row.guild_id,
+                  prefix: row.prefix,
+                  locale: row.locale,
+                  djEnabled: Boolean(row.dj_enabled),
+                  djRoleId: row.dj_role_id,
+                  maxQueueSize: row.max_queue_size || defaults.maxQueueSize,
+                  rcRateLimitMax: row.rc_rate_limit_max || defaults.rcRateLimitMax,
+                  rcRateLimitWindowMs: row.rc_rate_limit_window_ms || defaults.rcRateLimitWindowMs,
+                  rcExclusions: { ...defaults.rcExclusions, ...(row.rc_exclusions_json ?? {}) },
+              };
+        this.guildConfigCache.set(guildId, {
+            value: structuredClone(result),
+            expiresAt: Date.now() + PostgresDatabaseStore.CONFIG_CACHE_TTL_MS,
+        });
+        return result;
     }
 
     public async setGuildPrefix(guildId: string, prefix: string | null): Promise<GuildConfig> {
@@ -142,6 +205,7 @@ export class PostgresDatabaseStore implements DatabaseStore {
              ON CONFLICT (guild_id) DO UPDATE SET prefix = EXCLUDED.prefix, updated_at = NOW()`,
             [guildId, prefix],
         );
+        this.guildConfigCache.delete(guildId);
         return this.getGuildConfig(guildId);
     }
 
@@ -151,6 +215,7 @@ export class PostgresDatabaseStore implements DatabaseStore {
              ON CONFLICT (guild_id) DO UPDATE SET locale = EXCLUDED.locale, updated_at = NOW()`,
             [guildId, locale],
         );
+        this.guildConfigCache.delete(guildId);
         return this.getGuildConfig(guildId);
     }
 
@@ -164,6 +229,7 @@ export class PostgresDatabaseStore implements DatabaseStore {
              ON CONFLICT (guild_id) DO UPDATE SET dj_enabled = EXCLUDED.dj_enabled, dj_role_id = EXCLUDED.dj_role_id, updated_at = NOW()`,
             [guildId, djEnabled, djRoleId],
         );
+        this.guildConfigCache.delete(guildId);
         return this.getGuildConfig(guildId);
     }
 
@@ -195,10 +261,16 @@ export class PostgresDatabaseStore implements DatabaseStore {
                 JSON.stringify(merged.rcExclusions),
             ],
         );
+        this.guildConfigCache.set(guildId, {
+            value: structuredClone(merged),
+            expiresAt: Date.now() + PostgresDatabaseStore.CONFIG_CACHE_TTL_MS,
+        });
         return merged;
     }
 
     public async deleteGuildData(guildId: string): Promise<void> {
+        this.invalidateGuildConfigCache(guildId);
+        this.invalidateRequestChannelCache(guildId);
         const client = await this.pool.connect();
         try {
             await client.query("BEGIN");
@@ -230,7 +302,16 @@ export class PostgresDatabaseStore implements DatabaseStore {
     }
 
     public async getBotSettings(): Promise<BotSettings> {
-        return buildBotSettingsFromRaw(await this.getRawBotSettings());
+        const now = Date.now();
+        if (this.botSettingsCache && this.botSettingsCache.expiresAt > now) {
+            return structuredClone(this.botSettingsCache.value);
+        }
+        const parsed = buildBotSettingsFromRaw(await this.getRawBotSettings());
+        this.botSettingsCache = {
+            value: structuredClone(parsed),
+            expiresAt: Date.now() + PostgresDatabaseStore.SETTINGS_CACHE_TTL_MS,
+        };
+        return parsed;
     }
 
     public async setBotSetting(key: string, value: string | null): Promise<BotSettings> {
@@ -243,6 +324,7 @@ export class PostgresDatabaseStore implements DatabaseStore {
                 [key, value],
             );
         }
+        this.invalidateBotSettingsCache();
         return this.getBotSettings();
     }
 
@@ -262,10 +344,15 @@ export class PostgresDatabaseStore implements DatabaseStore {
         ];
         if (includeAlwaysOn) keys.push("always_on");
         await this.pool.query("DELETE FROM bot_settings WHERE key = ANY($1::text[])", [keys]);
+        this.invalidateBotSettingsCache();
         return this.getBotSettings();
     }
 
     public async getRawBotSettings(): Promise<Record<string, string | null>> {
+        const now = Date.now();
+        if (this.rawBotSettingsCache && this.rawBotSettingsCache.expiresAt > now) {
+            return { ...this.rawBotSettingsCache.value };
+        }
         const res = await this.pool.query<{ key: string; value: string | null }>(
             "SELECT key, value FROM bot_settings",
         );
@@ -273,6 +360,10 @@ export class PostgresDatabaseStore implements DatabaseStore {
         for (const row of res.rows) {
             out[row.key] = row.value;
         }
+        this.rawBotSettingsCache = {
+            value: { ...out },
+            expiresAt: Date.now() + PostgresDatabaseStore.SETTINGS_CACHE_TTL_MS,
+        };
         return out;
     }
 
@@ -280,6 +371,12 @@ export class PostgresDatabaseStore implements DatabaseStore {
         guildId: string,
         botId: string,
     ): Promise<RequestChannelConfig | null> {
+        const cacheKey = `${guildId}:${botId}`;
+        const now = Date.now();
+        const cached = this.requestChannelCache.get(cacheKey);
+        if (cached && cached.expiresAt > now) {
+            return cached.value ? { ...cached.value } : null;
+        }
         const res = await this.pool.query<{
             guild_id: string;
             bot_id: string;
@@ -290,7 +387,7 @@ export class PostgresDatabaseStore implements DatabaseStore {
             [guildId, botId],
         );
         const row = res.rows[0];
-        return row
+        const result = row
             ? {
                   guildId: row.guild_id,
                   botId: row.bot_id,
@@ -298,9 +395,19 @@ export class PostgresDatabaseStore implements DatabaseStore {
                   messageId: row.message_id,
               }
             : null;
+        this.requestChannelCache.set(cacheKey, {
+            value: result ? { ...result } : null,
+            expiresAt: Date.now() + PostgresDatabaseStore.CONFIG_CACHE_TTL_MS,
+        });
+        return result;
     }
 
     public async getRequestChannelsForGuild(guildId: string): Promise<RequestChannelConfig[]> {
+        const now = Date.now();
+        const cached = this.requestChannelsGuildCache.get(guildId);
+        if (cached && cached.expiresAt > now) {
+            return cached.value.map((c) => ({ ...c }));
+        }
         const res = await this.pool.query<{
             guild_id: string;
             bot_id: string;
@@ -310,12 +417,17 @@ export class PostgresDatabaseStore implements DatabaseStore {
             "SELECT guild_id, bot_id, channel_id, message_id FROM request_channels WHERE guild_id = $1",
             [guildId],
         );
-        return res.rows.map((r) => ({
+        const rows = res.rows.map((r) => ({
             guildId: r.guild_id,
             botId: r.bot_id,
             channelId: r.channel_id,
             messageId: r.message_id,
         }));
+        this.requestChannelsGuildCache.set(guildId, {
+            value: rows.map((c) => ({ ...c })),
+            expiresAt: Date.now() + PostgresDatabaseStore.CONFIG_CACHE_TTL_MS,
+        });
+        return rows;
     }
 
     public async getAllRequestChannelsForBot(botId: string): Promise<RequestChannelConfig[]> {
@@ -346,6 +458,11 @@ export class PostgresDatabaseStore implements DatabaseStore {
                 updated_at = NOW()`,
             [config.guildId, config.botId, config.channelId, config.messageId],
         );
+        this.requestChannelsGuildCache.delete(config.guildId);
+        this.requestChannelCache.set(`${config.guildId}:${config.botId}`, {
+            value: { ...config },
+            expiresAt: Date.now() + PostgresDatabaseStore.CONFIG_CACHE_TTL_MS,
+        });
     }
 
     public async deleteRequestChannel(guildId: string, botId: string): Promise<void> {
@@ -353,6 +470,11 @@ export class PostgresDatabaseStore implements DatabaseStore {
             guildId,
             botId,
         ]);
+        this.requestChannelsGuildCache.delete(guildId);
+        this.requestChannelCache.set(`${guildId}:${botId}`, {
+            value: null,
+            expiresAt: Date.now() + PostgresDatabaseStore.CONFIG_CACHE_TTL_MS,
+        });
     }
 
     public async getPlayerState(guildId: string, botId: string): Promise<PlayerState> {

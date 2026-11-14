@@ -9,6 +9,7 @@ import type { ClassifiedQuery, MediaProvider, ProviderHealth, QueryKind } from "
 import { classifyQuery } from "./QueryClassifier.js";
 import {
     isHlsFormat,
+    ResolvedEntryCache,
     selectPlayableFormatFromEntry,
     type YtDlpClient,
     type YtDlpEntry,
@@ -44,6 +45,7 @@ function mapSoundCloudEntry(entry: YtDlpEntry): Track | null {
 
 export class SoundCloudProvider implements MediaProvider {
     public readonly name = "soundcloud" as const;
+    private readonly entryCache = new ResolvedEntryCache();
 
     public constructor(private readonly ytdlp: YtDlpClient) {}
 
@@ -110,11 +112,15 @@ export class SoundCloudProvider implements MediaProvider {
         }
 
         const single = mapSoundCloudEntry(dump);
+        if (single) {
+            this.entryCache.store([url, single.url, single.id], dump);
+        }
         return { type: "results", items: single ? [single] : [] };
     }
 
     public async hydrateTrack(track: Track): Promise<Track> {
         const dump = await this.ytdlp.dumpJson(track.url, { noPlaylist: true });
+        this.entryCache.store([track.url, track.id], dump);
         const hydrated = mapSoundCloudEntry(dump);
         return hydrated
             ? {
@@ -129,15 +135,29 @@ export class SoundCloudProvider implements MediaProvider {
         track: Track,
         signal?: AbortSignal,
     ): Promise<StreamDescriptor> {
-        const entry = await this.ytdlp.dumpJson(track.url, {
-            noPlaylist: true,
-            format: "bestaudio/best",
-            signal,
-        });
-        const fmt = await selectPlayableFormatFromEntry(entry, signal, {
-            excludePreviewFormats: true,
-        });
+        const cacheKeys = [track.url, track.id];
+        let entry = this.entryCache.get(cacheKeys);
+        let fmt = entry
+            ? await selectPlayableFormatFromEntry(entry, signal, {
+                  excludePreviewFormats: true,
+              })
+            : null;
+
         if (!fmt?.url) {
+            this.entryCache.delete(cacheKeys);
+            entry = await this.ytdlp.dumpJson(track.url, {
+                noPlaylist: true,
+                format: "bestaudio/best",
+                signal,
+            });
+            fmt = await selectPlayableFormatFromEntry(entry, signal, {
+                excludePreviewFormats: true,
+            });
+            if (fmt?.url && entry) {
+                this.entryCache.store(cacheKeys, entry);
+            }
+        }
+        if (!fmt?.url || !entry) {
             throw new ProviderError(
                 `No playable SoundCloud audio format for ${track.url}`,
                 "unavailable",

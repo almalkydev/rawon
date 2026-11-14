@@ -37,12 +37,12 @@ export interface QualityProfileSettings {
 export const QUALITY_PROFILES: Record<AudioQualityProfile, QualityProfileSettings> = {
     fidelity: {
         bitrateKbps: 128,
-        compressionLevel: 10,
+        compressionLevel: 8,
         frameDurationMs: 20,
     },
     balanced: {
         bitrateKbps: 96,
-        compressionLevel: 8,
+        compressionLevel: 6,
         frameDurationMs: 20,
     },
     "low-bandwidth": {
@@ -164,6 +164,10 @@ export function buildFfmpegArgs(options: BuildFfmpegArgsOptions): string[] {
 
     if (options.isHttpInput) {
         args.push(
+            "-probesize",
+            "65536",
+            "-analyzeduration",
+            "500000",
             "-reconnect",
             "1",
             "-reconnect_streamed",

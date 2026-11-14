@@ -18,7 +18,12 @@ import {
 import { CommandRegistry } from "./CommandRegistry.js";
 import { CommandRouter } from "./CommandRouter.js";
 import { CookieStore, parseNetscapeCookieEntries } from "./CookieStore.js";
-import { DiscordVoiceTransport } from "./DiscordVoiceTransport.js";
+import {
+    DiscordVoiceTransport,
+    ensureStageSpeakerForChannel,
+    getVoiceChannelMemberInfos,
+    setVoiceChannelStatusForChannel,
+} from "./DiscordVoiceTransport.js";
 import { GoogleLoginService } from "./GoogleLoginService.js";
 import { buildNoticeContainer } from "./playerUi.js";
 import { RequestChannelService } from "./RequestChannelService.js";
@@ -173,10 +178,15 @@ export class MultiBotSupervisor {
         // Subscribe to cross-instance events (e.g., setup settings update)
         this.coordinator.onEvent((evt) => {
             if (evt.type === "settings_updated") {
+                this.store.invalidateBotSettingsCache?.();
                 void this.store
                     .getBotSettings()
                     .then((bs) => this.sessions.refreshBotSettings(bs))
                     .catch(() => undefined);
+            } else if (evt.type === "guild_updated") {
+                const guildId =
+                    typeof evt.payload.guildId === "string" ? evt.payload.guildId : undefined;
+                this.store.invalidateGuildConfigCache?.(guildId);
             }
         });
 
@@ -459,10 +469,15 @@ export class MultiBotSupervisor {
                     }
                 }
 
+                const [botSettings, guildCfg] = message.guild
+                    ? await Promise.all([
+                          this.store.getBotSettings(),
+                          this.store.getGuildConfig(message.guild.id),
+                      ])
+                    : [await this.store.getBotSettings(), null];
+
                 // 1. Check Hydra request channel ownership for THIS specific bot
-                if (message.guild) {
-                    const botSettings = await this.store.getBotSettings();
-                    const guildCfg = await this.store.getGuildConfig(message.guild.id);
+                if (message.guild && guildCfg) {
                     const loc = this.i18n.resolveLocale(guildCfg.locale, this.config.defaultLocale);
                     const t = this.i18n.scoped(loc);
                     const basePrefix = guildCfg.prefix ?? this.config.mainPrefix;
@@ -480,10 +495,6 @@ export class MultiBotSupervisor {
                 if (!this.config.enablePrefix) return;
 
                 // 2. Prefix / Mention check
-                const botSettings = await this.store.getBotSettings();
-                const guildCfg = message.guild
-                    ? await this.store.getGuildConfig(message.guild.id)
-                    : null;
                 const basePrefix = guildCfg?.prefix ?? this.config.mainPrefix;
                 const candidatePrefixes = [basePrefix, ...botSettings.altPrefix].filter(Boolean);
                 const mentionPfx = `<@${runtime.botId}>`;
@@ -612,16 +623,20 @@ export class MultiBotSupervisor {
                     if (oldState.channelId !== newState.channelId) {
                         await session.moveVoiceChannel(newState.channelId);
                     }
-                    const transport = new DiscordVoiceTransport({ client, logger: this.logger });
-                    await transport.ensureStageSpeaker(guildId, newState.channelId);
+                    await ensureStageSpeakerForChannel(
+                        client,
+                        guildId,
+                        newState.channelId,
+                        this.logger,
+                    );
                 }
 
                 if (
                     oldState.channelId === session.voiceChannelId ||
                     newState.channelId === session.voiceChannelId
                 ) {
-                    const transport = new DiscordVoiceTransport({ client, logger: this.logger });
-                    const members = await transport.getVoiceChannelMembers(
+                    const members = await getVoiceChannelMemberInfos(
+                        client,
                         guildId,
                         session.voiceChannelId,
                     );
@@ -724,13 +739,7 @@ export class MultiBotSupervisor {
         // Clear stale voice channel statuses from crashed runs
         const staleStatuses = await this.store.listVoiceChannelStatusesForBot(runtime.botId);
         for (const st of staleStatuses) {
-            const transport = new DiscordVoiceTransport({
-                client: runtime.client,
-                logger: this.logger,
-            });
-            await transport
-                .setVoiceChannelStatus(st.guildId, st.channelId, null)
-                .catch(() => undefined);
+            await setVoiceChannelStatusForChannel(runtime.client, st.channelId, null);
             await this.store
                 .deleteVoiceChannelStatus(st.guildId, runtime.botId)
                 .catch(() => undefined);

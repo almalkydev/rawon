@@ -65,8 +65,11 @@ export const skipCommand: CommandDefinition = {
         }
 
         skipVotes.delete(`${ctx.guild.id}:${ctx.activeSession.botId}`);
+        await ctx.defer();
         const { skipped } = await ctx.activeSession.skip();
-        await ctx.services.syncRequestChannelPlayer(ctx.guild.id, ctx.activeSession.botId);
+        void ctx.services
+            .syncRequestChannelPlayer(ctx.guild.id, ctx.activeSession.botId)
+            .catch(() => undefined);
 
         await ctx.reply(
             buildNoticeContainer({

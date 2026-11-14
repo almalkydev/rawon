@@ -622,4 +622,71 @@ describe("Provider Query Classification, Spotify Resolution & Lyrics", () => {
         expect(descriptor.canonicalKey).toBe("soundcloud:sc_full_track");
         expect(descriptor.url).toContain("sc-full.example/playlist.m3u8");
     });
+
+    it("reuses resolved YouTube entry formats in getStreamDescriptor without spawning yt-dlp twice", async () => {
+        let cachedUrlExpired = false;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: string | URL) => {
+                const url = String(input);
+                if (url.includes("cached_v1") && cachedUrlExpired) {
+                    return new Response("", { status: 403 });
+                }
+                return new Response(new Uint8Array([1, 2, 3]), { status: 206 });
+            }),
+        );
+
+        let dumpCalls = 0;
+        const ytdlpStub = {
+            dumpJson: vi.fn(async () => {
+                dumpCalls += 1;
+                const ver = dumpCalls === 1 ? "cached_v1" : "fresh_v2";
+                return {
+                    id: "dQw4w9WgXcQ",
+                    title: "Single-Pass Track",
+                    webpage_url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                    duration: 212,
+                    uploader: "Artist",
+                    formats: [
+                        {
+                            format_id: "251",
+                            url: `https://rr1.googlevideo.com/videoplayback?itag=251&ver=${ver}`,
+                            acodec: "opus",
+                            vcodec: "none",
+                            abr: 130,
+                            asr: 48000,
+                            audio_channels: 2,
+                            ext: "webm",
+                            protocol: "https",
+                        },
+                    ],
+                };
+            }),
+        } as unknown as YtDlpClient;
+
+        const yt = new YouTubeProvider(ytdlpStub);
+        const resolved = await yt.resolveUrl(
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "track",
+        );
+        expect(resolved.items).toHaveLength(1);
+        expect(dumpCalls).toBe(1);
+
+        // First stream resolution reuses cached entry — zero second yt-dlp invocation
+        const track = resolved.items[0];
+        expect(track).toBeDefined();
+        if (!track) {
+            throw new Error("Expected resolved track");
+        }
+        const firstDesc = await yt.getStreamDescriptor(track);
+        expect(firstDesc.url).toContain("ver=cached_v1");
+        expect(firstDesc.directPassthroughEligible).toBe(true);
+        expect(dumpCalls).toBe(1);
+
+        // If the cached format URL later 403s, stale entry is evicted and refreshed seamlessly
+        cachedUrlExpired = true;
+        const refreshedDesc = await yt.getStreamDescriptor(track);
+        expect(refreshedDesc.url).toContain("ver=fresh_v2");
+        expect(dumpCalls).toBe(2);
+    });
 });

@@ -128,6 +128,55 @@ export function classifyYtDlpError(stderr: string): ProviderError | RateLimitErr
     );
 }
 
+export class ResolvedEntryCache {
+    private readonly entries = new Map<string, { entry: YtDlpEntry; expiresAt: number }>();
+
+    public constructor(
+        private readonly maxEntries = 64,
+        private readonly ttlMs = 120_000,
+    ) {}
+
+    public store(keys: readonly (string | undefined)[], entry: YtDlpEntry): void {
+        if (!Array.isArray(entry.formats) || entry.formats.length === 0) {
+            return;
+        }
+        const expiresAt = Date.now() + this.ttlMs;
+        for (const rawKey of keys) {
+            const key = rawKey?.trim();
+            if (!key) continue;
+            if (this.entries.size >= this.maxEntries && !this.entries.has(key)) {
+                const oldestKey = this.entries.keys().next().value;
+                if (oldestKey) this.entries.delete(oldestKey);
+            }
+            this.entries.delete(key);
+            this.entries.set(key, { entry, expiresAt });
+        }
+    }
+
+    public get(keys: readonly (string | undefined)[]): YtDlpEntry | null {
+        const now = Date.now();
+        for (const rawKey of keys) {
+            const key = rawKey?.trim();
+            if (!key) continue;
+            const hit = this.entries.get(key);
+            if (!hit) continue;
+            if (hit.expiresAt <= now) {
+                this.entries.delete(key);
+                continue;
+            }
+            return hit.entry;
+        }
+        return null;
+    }
+
+    public delete(keys: readonly (string | undefined)[]): void {
+        for (const rawKey of keys) {
+            const key = rawKey?.trim();
+            if (key) this.entries.delete(key);
+        }
+    }
+}
+
 export class YtDlpClient {
     private binaryPath: string;
     private readonly scriptsDir: string;
@@ -273,14 +322,27 @@ export class YtDlpClient {
         };
 
         const timeoutMs = options.timeoutMs ?? 25_000;
-        let result = await this.execCapture(buildArgs(true), timeoutMs, options.signal);
+        let result = await this.execCapture(buildArgs(false), timeoutMs, options.signal);
 
-        // Fallback gracefully if an older yt-dlp binary rejects --remote-components
-        if (
+        // Retry with remote EJS solver components only when bundled solver hits a JS/challenge error
+        const lowerErr = result.stderr.toLowerCase();
+        const needsRemoteEjs =
             result.exitCode !== 0 &&
-            result.stderr.toLowerCase().includes("no such option: --remote-components")
-        ) {
-            result = await this.execCapture(buildArgs(false), timeoutMs, options.signal);
+            !lowerErr.includes("not a bot") &&
+            !lowerErr.includes("confirm your age") &&
+            !lowerErr.includes("age-restricted") &&
+            !lowerErr.includes("unavailable") &&
+            !lowerErr.includes("private video") &&
+            !lowerErr.includes("429") &&
+            (lowerErr.includes("ejs") ||
+                lowerErr.includes("challenge") ||
+                lowerErr.includes("n sig") ||
+                lowerErr.includes("signature"));
+        if (needsRemoteEjs && !options.signal?.aborted) {
+            const withRemote = await this.execCapture(buildArgs(true), timeoutMs, options.signal);
+            if (withRemote.stdout.trim().length > 0 || withRemote.exitCode === 0) {
+                result = withRemote;
+            }
         }
 
         const { stdout, stderr, exitCode } = result;
@@ -683,7 +745,7 @@ export async function probeCandidateStreamable(
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     signal?.addEventListener("abort", onAbort, { once: true });
-    const timer = setTimeout(() => controller.abort(), 4_000);
+    const timer = setTimeout(() => controller.abort(), 2_500);
 
     try {
         const baseHeaders: Record<string, string> = {
@@ -755,13 +817,27 @@ export async function selectPlayableFormatFromEntry(
     }
 
     const bounded = candidates.slice(0, options.maxCandidates ?? 8);
-    for (const fmt of bounded) {
-        if (signal?.aborted) break;
-        if (await probeCandidateStreamable(fmt, entry?.http_headers, signal)) {
-            return fmt;
-        }
+    if (bounded.length === 0 || signal?.aborted) {
+        return null;
     }
-    return null;
+
+    // Fast path: probe top-ranked format first (1 RTT when valid), then probe fallbacks concurrently
+    const first = bounded[0];
+    if (first && (await probeCandidateStreamable(first, entry?.http_headers, signal))) {
+        return first;
+    }
+    if (bounded.length === 1 || signal?.aborted) {
+        return null;
+    }
+
+    const checks = await Promise.all(
+        bounded
+            .slice(1)
+            .map(async (fmt) =>
+                (await probeCandidateStreamable(fmt, entry?.http_headers, signal)) ? fmt : null,
+            ),
+    );
+    return checks.find((fmt): fmt is YtDlpFormatEntry => fmt !== null) ?? null;
 }
 
 export { readFileSync };

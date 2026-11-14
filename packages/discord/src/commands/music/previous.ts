@@ -45,6 +45,18 @@ export const previousCommand: CommandDefinition = {
             return;
         }
 
+        if (!ctx.activeSession.queue.hasHistory()) {
+            await ctx.reply(
+                buildNoticeContainer({
+                    colorHex: botSettings.embedColor,
+                    description: `${botSettings.noEmoji} ${ctx.t("commands.music.previous.noPrevious")}`,
+                }),
+                true,
+            );
+            return;
+        }
+
+        await ctx.defer();
         const prev = await ctx.activeSession.previous();
         if (!prev) {
             await ctx.reply(
@@ -57,7 +69,9 @@ export const previousCommand: CommandDefinition = {
             return;
         }
 
-        await ctx.services.syncRequestChannelPlayer(ctx.guild.id, ctx.activeSession.botId);
+        void ctx.services
+            .syncRequestChannelPlayer(ctx.guild.id, ctx.activeSession.botId)
+            .catch(() => undefined);
         await ctx.reply(
             buildNoticeContainer({
                 colorHex: botSettings.embedColor,

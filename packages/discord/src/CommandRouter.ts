@@ -6,6 +6,8 @@ import {
     type ButtonInteraction,
     ChannelType,
     type ChatInputCommandInteraction,
+    type Guild,
+    type GuildMember,
     type Message,
     type MessageContextMenuCommandInteraction,
     MessageFlags,
@@ -205,12 +207,9 @@ export class CommandRouter {
         const t = this.services.i18n.scoped(locale);
         const prefix = guildConfig?.prefix ?? this.services.config.mainPrefix;
 
-        const member =
-            interaction.member && "voice" in interaction.member
-                ? interaction.member
-                : guild
-                  ? await guild.members.fetch(interaction.user.id).catch(() => null)
-                  : null;
+        const member = guild
+            ? await this.resolveGuildMember(guild, interaction.user.id, interaction.member)
+            : null;
 
         let repliedOrDeferred = false;
         const ctx: CommandContext = {
@@ -311,7 +310,11 @@ export class CommandRouter {
             return;
         }
 
-        const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+        const member = await this.resolveGuildMember(
+            interaction.guild,
+            interaction.user.id,
+            interaction.member,
+        );
         const voiceChannel = member?.voice.channel as VoiceBasedChannel | null;
         if (!voiceChannel) {
             await interaction.reply({
@@ -498,9 +501,11 @@ export class CommandRouter {
                 return;
             }
 
-            const member = await interaction.guild.members
-                .fetch(interaction.user.id)
-                .catch(() => null);
+            const member = await this.resolveGuildMember(
+                interaction.guild,
+                interaction.user.id,
+                interaction.member,
+            );
             if (!member || member.voice.channelId !== session.voiceChannelId) {
                 await replyEphemeral(`${botSettings.noEmoji} ${t("utils.musicDecorator.sameVC")}`);
                 return;
@@ -543,7 +548,9 @@ export class CommandRouter {
                     await session.setAutoplay(!session.getPlayerState().autoplay);
                     break;
             }
-            await this.services.syncRequestChannelPlayer(interaction.guild.id, session.botId);
+            void this.services
+                .syncRequestChannelPlayer(interaction.guild.id, session.botId)
+                .catch(() => undefined);
             return;
         }
 
@@ -659,15 +666,18 @@ export class CommandRouter {
             deletePendingSelection(selId);
             if (!track) return;
 
-            const member = await interaction.guild.members
-                .fetch(interaction.user.id)
-                .catch(() => null);
+            const member = await this.resolveGuildMember(
+                interaction.guild,
+                interaction.user.id,
+                interaction.member,
+            );
             const vc = member?.voice.channel as VoiceBasedChannel | null;
             if (!vc) {
                 await replyEphemeral(`${botSettings.noEmoji} ${t("utils.musicDecorator.noInVC")}`);
                 return;
             }
 
+            await interaction.deferUpdate();
             const session = await this.services.sessions.getOrCreateSession({
                 guildId: interaction.guild.id,
                 botId: runtime.botId,
@@ -684,16 +694,20 @@ export class CommandRouter {
                 requesterId: interaction.user.id,
                 requesterTag: interaction.user.tag,
             });
-            await this.services.syncRequestChannelPlayer(interaction.guild.id, runtime.botId);
+            void this.services
+                .syncRequestChannelPlayer(interaction.guild.id, runtime.botId)
+                .catch(() => undefined);
 
-            await interaction.update(
-                buildNoticeContainer({
+            await interaction.editReply({
+                ...buildNoticeContainer({
                     colorHex: botSettings.embedColor,
                     description: `${botSettings.yesEmoji} ${t("requestChannel.addedToQueue", {
                         song: `**[${track.title}](${track.url})**`,
                     })}`,
-                }) as never,
-            );
+                }),
+                content: null,
+                embeds: [],
+            } as never);
             return;
         }
 
@@ -897,5 +911,18 @@ export class CommandRouter {
                 )
                 .catch(() => undefined);
         }
+    }
+
+    private async resolveGuildMember(
+        guild: Guild,
+        userId: string,
+        rawMember: unknown,
+    ): Promise<GuildMember | null> {
+        if (rawMember && typeof rawMember === "object" && "voice" in rawMember) {
+            return rawMember as GuildMember;
+        }
+        return (
+            guild.members.cache.get(userId) ?? (await guild.members.fetch(userId).catch(() => null))
+        );
     }
 }

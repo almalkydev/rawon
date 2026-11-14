@@ -49,6 +49,9 @@ export interface DatabaseStore {
     setBotSetting(key: string, value: string | null): Promise<BotSettings>;
     resetBotSettings(includeAlwaysOn?: boolean): Promise<BotSettings>;
     getRawBotSettings(): Promise<Record<string, string | null>>;
+    invalidateBotSettingsCache?(): void;
+    invalidateGuildConfigCache?(guildId?: string): void;
+    invalidateRequestChannelCache?(guildId?: string): void;
 
     // Request channels
     getRequestChannel(guildId: string, botId: string): Promise<RequestChannelConfig | null>;
