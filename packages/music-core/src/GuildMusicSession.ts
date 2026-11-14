@@ -991,7 +991,9 @@ export class GuildMusicSession extends EventEmitter {
         } satisfies SessionNotice);
 
         await this.teardownCurrentAudio();
-        let next = this.queue.advance("skipped");
+        const wasCurrent = this.queue.currentKey === queued.key;
+        this.queue.removeByKey(queued.key);
+        let next = wasCurrent ? this.queue.current : this.queue.advance("skipped");
         if (!next && this.playerState.autoplay) {
             next = await this.enqueueAutoplayTrack(queued.track);
         }

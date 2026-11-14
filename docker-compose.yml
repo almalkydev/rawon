@@ -20,6 +20,8 @@ x-rawon-env: &rawon-env
   DEVTOOLS_PORT: ${DEVTOOLS_PORT:-9222}
   CHROMIUM_PATH: ${CHROMIUM_PATH:-}
   COOKIES_ENCRYPTION_KEY: ${COOKIES_ENCRYPTION_KEY:-}
+  YOUTUBE_COOKIES: ${YOUTUBE_COOKIES:-}
+  YTDLP_FORCE_IPV4: ${YTDLP_FORCE_IPV4:-false}
   DATABASE_URL: postgres://${POSTGRES_USER:-rawon}:${POSTGRES_PASSWORD:-change_me_strong_password}@postgres:5432/${POSTGRES_DB:-rawon}
   REDIS_URL: redis://redis:6379
   CACHE_DIR: /app/cache

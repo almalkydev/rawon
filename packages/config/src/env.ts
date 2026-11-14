@@ -45,6 +45,8 @@ const envSchema = z.object({
     AUDIO_QUALITY_PROFILE: z.enum(["fidelity", "balanced", "low-bandwidth"]).default("fidelity"),
     AUDIO_NORMALIZE: yesNoSchema.transform((v) => v === "yes" || v === "true"),
     COOKIES_ENCRYPTION_KEY: z.string().default(""),
+    YOUTUBE_COOKIES: z.string().default(""),
+    YTDLP_FORCE_IPV4: yesNoSchema.transform((v) => v === "yes" || v === "true"),
     MAX_QUEUE_SIZE: optionalPositiveInt(500),
     RC_RATE_LIMIT_MAX: optionalPositiveInt(5),
     RC_RATE_LIMIT_WINDOW_MS: optionalPositiveInt(15_000),
@@ -86,6 +88,8 @@ export interface RawonConfig {
     audioQualityProfile: "fidelity" | "balanced" | "low-bandwidth";
     audioNormalize: boolean;
     cookiesEncryptionKey: string | null;
+    youtubeCookies: string | null;
+    ytDlpForceIpv4: boolean;
     maxQueueSize: number;
     rcRateLimitMax: number;
     rcRateLimitWindowMs: number;
@@ -160,6 +164,8 @@ export function loadConfig(
         audioQualityProfile: parsed.AUDIO_QUALITY_PROFILE,
         audioNormalize: parsed.AUDIO_NORMALIZE,
         cookiesEncryptionKey: parsed.COOKIES_ENCRYPTION_KEY.trim() || null,
+        youtubeCookies: parsed.YOUTUBE_COOKIES.trim() || null,
+        ytDlpForceIpv4: parsed.YTDLP_FORCE_IPV4,
         maxQueueSize: parsed.MAX_QUEUE_SIZE,
         rcRateLimitMax: parsed.RC_RATE_LIMIT_MAX,
         rcRateLimitWindowMs: parsed.RC_RATE_LIMIT_WINDOW_MS,

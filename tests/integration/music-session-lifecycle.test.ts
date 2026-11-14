@@ -16,7 +16,12 @@ import {
     type VoiceTransport,
 } from "@rawon/music-core";
 import type { ProviderRegistry } from "@rawon/providers";
-import { ExpiredStreamError, type StreamDescriptor, type Track } from "@rawon/shared";
+import {
+    ExpiredStreamError,
+    ProviderError,
+    type StreamDescriptor,
+    type Track,
+} from "@rawon/shared";
 import { afterEach, describe, expect, it } from "vitest";
 
 const tempDirs: string[] = [];
@@ -271,5 +276,73 @@ describe("GuildMusicSession Full Lifecycle & Recovery", () => {
 
         // Zero leaked FFmpeg processes after teardown
         expect(supervisor.getActiveCount()).toBe(0);
+    });
+
+    it("removes permanently failed tracks from queue instead of leaving them orphaned in Up Next", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rawon-session-fail-"));
+        tempDirs.push(dir);
+
+        const store = new MemoryDatabaseStore();
+        await store.initialize();
+        const coordinator = new InMemoryCoordinator();
+        const supervisor = new ProcessSupervisor();
+        const audioPipeline = new AudioPipeline({ supervisor });
+        const providersStub = {
+            hydrateTrack: async (track: Track) => track,
+            getStreamDescriptor: async () => {
+                throw new ProviderError(
+                    "YouTube requested bot-verification cookies",
+                    "bot_detection",
+                    false,
+                );
+            },
+            findRelatedTracks: async () => [],
+        } as unknown as ProviderRegistry;
+
+        const transport = new ControllableTestVoiceTransport();
+        const guildConfig = createDefaultGuildConfig("g_fail");
+        const session = new GuildMusicSession({
+            guildId: "g_fail",
+            botId: "bot_0",
+            voiceChannelId: "vc_fail",
+            textChannelId: "txt_fail",
+            store,
+            coordinator,
+            providers: providersStub,
+            audioPipeline,
+            transport,
+            guildConfig,
+            botSettings: BOT_SETTINGS_DEFAULTS,
+            playerState: createDefaultPlayerState(BOT_SETTINGS_DEFAULTS),
+        });
+
+        const notices: string[] = [];
+        session.on("notice", (n: { code: string }) => notices.push(n.code));
+
+        try {
+            const failingTrack: Track = {
+                id: "janice_stfu",
+                title: "Janice STFU",
+                url: "https://www.youtube.com/watch?v=janice_stfu",
+                duration: 238,
+                thumbnail: "",
+                author: "Janice",
+                provider: "youtube",
+            };
+
+            await session.addAndMaybePlay({
+                tracks: [failingTrack],
+                requesterId: "user_1",
+            });
+
+            const snapshot = session.getSnapshot();
+            expect(notices).toContain("track_failed");
+            expect(snapshot.status).toBe("idle");
+            expect(snapshot.currentTrack).toBeNull();
+            expect(snapshot.queueLength).toBe(0);
+            expect(snapshot.upcomingCount).toBe(0);
+        } finally {
+            await session.destroy();
+        }
     });
 });

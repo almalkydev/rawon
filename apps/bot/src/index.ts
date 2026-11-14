@@ -50,6 +50,7 @@ async function bootstrap(): Promise<void> {
             config.stegripeApiLyricsToken,
             config.spotifyClientSecret,
             config.cookiesEncryptionKey ?? "",
+            config.youtubeCookies ?? "",
         ],
     });
 
@@ -110,6 +111,7 @@ async function bootstrap(): Promise<void> {
     const ytdlp = new YtDlpClient({
         binaryPath: config.ytDlpPath,
         cacheDir: config.cacheDir,
+        forceIpv4: config.ytDlpForceIpv4,
         logger,
     });
     await ytdlp.ensureBinary().catch((err) => {

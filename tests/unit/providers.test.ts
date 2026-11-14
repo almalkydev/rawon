@@ -445,4 +445,181 @@ describe("Provider Query Classification, Spotify Resolution & Lyrics", () => {
         expect(fallbackDesc.canonicalKey).toContain("soundcloud:");
         expect(fallbackDesc.url).toContain("cf-media.sndcdn.com/full.mp3");
     });
+
+    it("retries YouTube with IPv4 on bot_detection and returns descriptor when IPv4 succeeds", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 206 })),
+        );
+
+        const dumpCalls: Array<{ input: string; forceIpv4?: boolean; extractorArgs?: string }> = [];
+        const ytdlpStub = {
+            dumpJson: vi.fn(
+                async (input: string, opts?: { forceIpv4?: boolean; extractorArgs?: string }) => {
+                    dumpCalls.push({
+                        input,
+                        forceIpv4: opts?.forceIpv4,
+                        extractorArgs: opts?.extractorArgs,
+                    });
+                    if (!opts?.forceIpv4) {
+                        throw new ProviderError(
+                            "YouTube requested bot-verification cookies",
+                            "bot_detection",
+                            false,
+                        );
+                    }
+                    return {
+                        id: "yt_ipv4_ok",
+                        title: "La Tabtaad Arjouk",
+                        duration: 301,
+                        formats: [
+                            {
+                                format_id: "251",
+                                url: "https://rr2.googlevideo.com/videoplayback?itag=251&ipv4=1",
+                                acodec: "opus",
+                                vcodec: "none",
+                                abr: 132,
+                                asr: 48000,
+                                audio_channels: 2,
+                                ext: "webm",
+                                protocol: "https",
+                            },
+                        ],
+                    };
+                },
+            ),
+        } as unknown as YtDlpClient;
+
+        const yt = new YouTubeProvider(ytdlpStub);
+        const descriptor = await yt.getStreamDescriptor({
+            id: "yt_ipv4_ok",
+            title: "La Tabtaad Arjouk",
+            url: "https://www.youtube.com/watch?v=yt_ipv4_ok",
+            duration: 301,
+            thumbnail: "",
+            author: "Hagoula Khaleji - Topic",
+            provider: "youtube",
+        });
+
+        expect(descriptor.url).toContain("ipv4=1");
+        expect(dumpCalls).toHaveLength(2);
+        expect(dumpCalls[0]?.forceIpv4).toBeUndefined();
+        expect(dumpCalls[1]?.forceIpv4).toBe(true);
+        expect(dumpCalls[1]?.extractorArgs).toBeUndefined();
+    });
+
+    it("falls back to SoundCloud full track when YouTube hits bot_detection and skips 30s Go+ previews", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: string | URL) => {
+                const url = String(input);
+                if (url.includes("sc-full.example/playlist.m3u8")) {
+                    return new Response(
+                        "#EXTM3U\n#EXTINF:5.0,\nhttps://sc-full.example/seg0.aac\n",
+                        { status: 200 },
+                    );
+                }
+                if (url.includes("sc-full.example/seg0.aac")) {
+                    return new Response(new Uint8Array([9, 8, 7]), { status: 206 });
+                }
+                return new Response(new Uint8Array([1, 2, 3]), { status: 206 });
+            }),
+        );
+
+        const searchedQueries: string[] = [];
+        const ytdlpStub = {
+            dumpJson: vi.fn(
+                async (input: string, _opts?: { forceIpv4?: boolean; extractorArgs?: string }) => {
+                    if (input.includes("youtube.com")) {
+                        throw new ProviderError(
+                            "YouTube requested bot-verification cookies",
+                            "bot_detection",
+                            false,
+                        );
+                    }
+                    if (input.startsWith("scsearch8:")) {
+                        const query = input.slice("scsearch8:".length);
+                        searchedQueries.push(query);
+                        if (query.startsWith("Drake ")) {
+                            // First "[author] [title]" query only returns a 30s Go+ preview
+                            return {
+                                entries: [
+                                    {
+                                        id: "sc_preview_only",
+                                        title: "STFU Preview",
+                                        webpage_url: "https://soundcloud.com/janicethis/stfu",
+                                        duration: 30,
+                                        uploader: "Janice",
+                                    },
+                                ],
+                            };
+                        }
+                        // Second cleaned title-only query returns preview first, full track second
+                        return {
+                            entries: [
+                                {
+                                    id: "sc_preview_first",
+                                    title: "Janice STFU (Go+ Preview)",
+                                    webpage_url: "https://soundcloud.com/janicethis/stfu",
+                                    duration: 30,
+                                    uploader: "janicethis",
+                                },
+                                {
+                                    id: "sc_full_track",
+                                    title: "Janice STFU Full",
+                                    webpage_url:
+                                        "https://soundcloud.com/free-drake-songs/janice-stfu-drake-iceman",
+                                    duration: 249.7,
+                                    uploader: "Free Drake Songs",
+                                },
+                            ],
+                        };
+                    }
+                    if (input.includes("janice-stfu-drake-iceman")) {
+                        return {
+                            id: "sc_full_track",
+                            title: "Janice STFU Full",
+                            duration: 249.7,
+                            formats: [
+                                {
+                                    format_id: "hls_mp3_1_0_preview",
+                                    url: "https://sc-preview.example/preview.m3u8",
+                                    acodec: "mp3",
+                                    vcodec: "none",
+                                    abr: 128,
+                                    ext: "mp3",
+                                    protocol: "m3u8_native",
+                                },
+                                {
+                                    format_id: "hls_aac_96k",
+                                    url: "https://sc-full.example/playlist.m3u8",
+                                    acodec: "aac",
+                                    vcodec: "none",
+                                    abr: 96,
+                                    ext: "m4a",
+                                    protocol: "m3u8_native",
+                                },
+                            ],
+                        };
+                    }
+                    throw new Error(`Unexpected dumpJson input: ${input}`);
+                },
+            ),
+        } as unknown as YtDlpClient;
+
+        const registry = new ProviderRegistry({ ytdlp: ytdlpStub });
+        const descriptor = await registry.getStreamDescriptor({
+            id: "yt_bot_1",
+            title: "Janice STFU (Official Audio)",
+            url: "https://www.youtube.com/watch?v=yt_bot_1",
+            duration: 238,
+            thumbnail: "",
+            author: "Drake - Topic",
+            provider: "youtube",
+        });
+
+        expect(searchedQueries).toEqual(["Drake Janice STFU", "Janice STFU"]);
+        expect(descriptor.canonicalKey).toBe("soundcloud:sc_full_track");
+        expect(descriptor.url).toContain("sc-full.example/playlist.m3u8");
+    });
 });

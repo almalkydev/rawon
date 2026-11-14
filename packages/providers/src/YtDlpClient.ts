@@ -67,6 +67,7 @@ export interface YtDlpDumpOptions {
     playlistStart?: number;
     format?: string;
     extractorArgs?: string;
+    forceIpv4?: boolean;
     ignoreErrors?: boolean;
     signal?: AbortSignal;
     timeoutMs?: number;
@@ -77,6 +78,7 @@ export interface YtDlpClientOptions {
     cacheDir: string;
     cookiesPath?: string | null;
     visitorData?: string | null;
+    forceIpv4?: boolean;
     logger?: Logger;
 }
 
@@ -131,6 +133,7 @@ export class YtDlpClient {
     private readonly scriptsDir: string;
     private cookiesPath: string | null;
     private visitorData: string | null;
+    private readonly defaultForceIpv4: boolean;
     private readonly logger?: Logger;
     private updateTimer: NodeJS.Timeout | null = null;
 
@@ -138,6 +141,7 @@ export class YtDlpClient {
         this.scriptsDir = resolve(options.cacheDir, "scripts");
         this.cookiesPath = options.cookiesPath ?? null;
         this.visitorData = options.visitorData ?? null;
+        this.defaultForceIpv4 = options.forceIpv4 === true;
         this.logger = options.logger;
         this.binaryPath = this.resolveInitialBinaryPath(options.binaryPath);
     }
@@ -259,6 +263,9 @@ export class YtDlpClient {
                 args.push("--playlist-start", String(options.playlistStart));
             if (options.playlistEnd !== undefined)
                 args.push("--playlist-end", String(options.playlistEnd));
+            if (options.forceIpv4 ?? this.defaultForceIpv4) {
+                args.push("-4");
+            }
 
             this.appendAuthArgs(args);
             args.push("--", target);
@@ -657,6 +664,104 @@ export function extractBestAudioFormat(
     entry: YtDlpEntry | null | undefined,
 ): YtDlpFormatEntry | null {
     return listAudioFormatCandidates(entry)[0] ?? null;
+}
+
+/**
+ * Verifies with a tiny byte-range or HLS manifest+segment request that the CDN URL
+ * actually serves bytes (200/206) instead of returning HTTP 403/404 at playback time.
+ */
+export async function probeCandidateStreamable(
+    fmt: YtDlpFormatEntry,
+    fallbackHeaders: Record<string, string> | undefined,
+    signal?: AbortSignal,
+): Promise<boolean> {
+    if (!fmt.url) return false;
+    if (!fmt.url.startsWith("http://") && !fmt.url.startsWith("https://")) {
+        return true;
+    }
+
+    const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    signal?.addEventListener("abort", onAbort, { once: true });
+    const timer = setTimeout(() => controller.abort(), 4_000);
+
+    try {
+        const baseHeaders: Record<string, string> = {
+            ...(fallbackHeaders ?? {}),
+            ...(fmt.http_headers ?? {}),
+        };
+
+        if (!isHlsFormat(fmt)) {
+            const res = await fetch(fmt.url, {
+                method: "GET",
+                headers: { ...baseHeaders, Range: "bytes=0-63" },
+                signal: controller.signal,
+            });
+            await res.body?.cancel().catch(() => undefined);
+            return res.status === 200 || res.status === 206;
+        }
+
+        const res = await fetch(fmt.url, {
+            method: "GET",
+            headers: baseHeaders,
+            signal: controller.signal,
+        });
+        if (!res.ok) {
+            await res.body?.cancel().catch(() => undefined);
+            return false;
+        }
+
+        const manifest = await res.text();
+        if (!manifest.includes("#EXTM3U")) {
+            return false;
+        }
+
+        const firstSegmentUrl = manifest
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .find((line) => line.length > 0 && !line.startsWith("#") && /^https?:\/\//i.test(line));
+        if (!firstSegmentUrl) {
+            return true;
+        }
+
+        const segRes = await fetch(firstSegmentUrl, {
+            method: "GET",
+            headers: { ...baseHeaders, Range: "bytes=0-63" },
+            signal: controller.signal,
+        });
+        await segRes.body?.cancel().catch(() => undefined);
+        return segRes.status === 200 || segRes.status === 206;
+    } catch {
+        return false;
+    } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+    }
+}
+
+export async function selectPlayableFormatFromEntry(
+    entry: YtDlpEntry | null | undefined,
+    signal?: AbortSignal,
+    options: { excludePreviewFormats?: boolean; maxCandidates?: number } = {},
+): Promise<YtDlpFormatEntry | null> {
+    let candidates = listAudioFormatCandidates(entry);
+    if (options.excludePreviewFormats) {
+        const nonPreview = candidates.filter(
+            (fmt) => !fmt.format_id?.toLowerCase().includes("_preview"),
+        );
+        if (nonPreview.length > 0) {
+            candidates = nonPreview;
+        }
+    }
+
+    const bounded = candidates.slice(0, options.maxCandidates ?? 8);
+    for (const fmt of bounded) {
+        if (signal?.aborted) break;
+        if (await probeCandidateStreamable(fmt, entry?.http_headers, signal)) {
+            return fmt;
+        }
+    }
+    return null;
 }
 
 export { readFileSync };

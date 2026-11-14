@@ -17,7 +17,7 @@ import {
 } from "discord.js";
 import { CommandRegistry } from "./CommandRegistry.js";
 import { CommandRouter } from "./CommandRouter.js";
-import { CookieStore } from "./CookieStore.js";
+import { CookieStore, parseNetscapeCookieEntries } from "./CookieStore.js";
 import { DiscordVoiceTransport } from "./DiscordVoiceTransport.js";
 import { GoogleLoginService } from "./GoogleLoginService.js";
 import { buildNoticeContainer } from "./playerUi.js";
@@ -96,6 +96,22 @@ export class MultiBotSupervisor {
         const restoredCookies = this.cookieStore.restoreFromEncryptedIfNeeded();
         if (restoredCookies) {
             this.providers.ytdlp.setCookiesPath(restoredCookies);
+        }
+
+        if (options.config.youtubeCookies) {
+            const envEntries = parseNetscapeCookieEntries(options.config.youtubeCookies);
+            if (envEntries.length > 0) {
+                const saved = this.cookieStore.saveCookies(envEntries);
+                this.providers.ytdlp.setCookiesPath(saved.cookiesPath);
+                this.logger.info(
+                    { cookieCount: saved.count },
+                    "Loaded YouTube cookies from YOUTUBE_COOKIES environment configuration",
+                );
+            } else {
+                this.logger.warn(
+                    "YOUTUBE_COOKIES was provided but did not contain valid Netscape cookie entries",
+                );
+            }
         }
 
         this.requestChannels = new RequestChannelService({

@@ -10,7 +10,7 @@ import type { ClassifiedQuery, MediaProvider, ProviderHealth, QueryKind } from "
 import { classifyQuery, extractYouTubeVideoId, isYouTubeMusicUrl } from "./QueryClassifier.js";
 import {
     isHlsFormat,
-    listAudioFormatCandidates,
+    selectPlayableFormatFromEntry,
     type YtDlpClient,
     type YtDlpEntry,
     type YtDlpFormatEntry,
@@ -21,90 +21,8 @@ const YOUTUBE_FALLBACK_CLIENTS = [
     "youtube:player_client=android",
     "youtube:player_client=tv_simply",
     "youtube:player_client=android_vr",
+    "youtube:player_client=web_embedded",
 ] as const;
-
-async function probeCandidateStreamable(
-    fmt: YtDlpFormatEntry,
-    fallbackHeaders: Record<string, string> | undefined,
-    signal?: AbortSignal,
-): Promise<boolean> {
-    if (!fmt.url) return false;
-    if (!fmt.url.startsWith("http://") && !fmt.url.startsWith("https://")) {
-        return true;
-    }
-
-    const controller = new AbortController();
-    const onAbort = () => controller.abort();
-    signal?.addEventListener("abort", onAbort, { once: true });
-    const timer = setTimeout(() => controller.abort(), 4_000);
-
-    try {
-        const baseHeaders: Record<string, string> = {
-            ...(fallbackHeaders ?? {}),
-            ...(fmt.http_headers ?? {}),
-        };
-
-        if (!isHlsFormat(fmt)) {
-            const res = await fetch(fmt.url, {
-                method: "GET",
-                headers: { ...baseHeaders, Range: "bytes=0-63" },
-                signal: controller.signal,
-            });
-            await res.body?.cancel().catch(() => undefined);
-            return res.status === 200 || res.status === 206;
-        }
-
-        const res = await fetch(fmt.url, {
-            method: "GET",
-            headers: baseHeaders,
-            signal: controller.signal,
-        });
-        if (!res.ok) {
-            await res.body?.cancel().catch(() => undefined);
-            return false;
-        }
-
-        const manifest = await res.text();
-        if (!manifest.includes("#EXTM3U")) {
-            return false;
-        }
-
-        const firstSegmentUrl = manifest
-            .split(/\r?\n/)
-            .map((line) => line.trim())
-            .find((line) => line.length > 0 && !line.startsWith("#") && /^https?:\/\//i.test(line));
-        if (!firstSegmentUrl) {
-            return true;
-        }
-
-        const segRes = await fetch(firstSegmentUrl, {
-            method: "GET",
-            headers: { ...baseHeaders, Range: "bytes=0-63" },
-            signal: controller.signal,
-        });
-        await segRes.body?.cancel().catch(() => undefined);
-        return segRes.status === 200 || segRes.status === 206;
-    } catch {
-        return false;
-    } finally {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
-    }
-}
-
-async function selectPlayableFormatFromEntry(
-    entry: YtDlpEntry | null | undefined,
-    signal?: AbortSignal,
-): Promise<YtDlpFormatEntry | null> {
-    const candidates = listAudioFormatCandidates(entry).slice(0, 8);
-    for (const fmt of candidates) {
-        if (signal?.aborted) break;
-        if (await probeCandidateStreamable(fmt, entry?.http_headers, signal)) {
-            return fmt;
-        }
-    }
-    return null;
-}
 
 function positiveDuration(val: unknown): number {
     return typeof val === "number" && Number.isFinite(val) && val > 0 ? Math.floor(val) : 0;
@@ -294,6 +212,30 @@ export class YouTubeProvider implements MediaProvider {
             }
         }
 
+        const wasBotDetected =
+            primaryErr instanceof ProviderError && primaryErr.category === "bot_detection";
+
+        // Dual-stack VPS hosts often trigger bot-checks on IPv6 while IPv4 passes
+        if (!fmt?.url && wasBotDetected && !signal?.aborted) {
+            try {
+                const ipv4Entry = await this.ytdlp.dumpJson(target, {
+                    noPlaylist: true,
+                    format: "bestaudio[acodec=opus]/bestaudio/best",
+                    forceIpv4: true,
+                    signal,
+                });
+                const ipv4Fmt = await selectPlayableFormatFromEntry(ipv4Entry, signal);
+                if (ipv4Fmt?.url) {
+                    entry = ipv4Entry;
+                    fmt = ipv4Fmt;
+                }
+            } catch (ipv4Err) {
+                if (ipv4Err instanceof ProviderError && ipv4Err.category === "age_restricted") {
+                    throw ipv4Err;
+                }
+            }
+        }
+
         // Fallback across alternate player clients when default formats fail or return 403
         if (!fmt?.url && !signal?.aborted) {
             for (const extractorArgs of YOUTUBE_FALLBACK_CLIENTS) {
@@ -302,6 +244,7 @@ export class YouTubeProvider implements MediaProvider {
                         noPlaylist: true,
                         format: "bestaudio/best",
                         extractorArgs,
+                        forceIpv4: wasBotDetected,
                         signal,
                     });
                     const fallbackFmt = await selectPlayableFormatFromEntry(fallbackEntry, signal);

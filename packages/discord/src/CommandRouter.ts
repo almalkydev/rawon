@@ -77,7 +77,7 @@ function parseMentionId(
     return m?.[1] ?? null;
 }
 
-function createPrefixArgsReader(args: string[]): CommandArgsReader {
+function createPrefixArgsReader(args: string[], message?: Message): CommandArgsReader {
     return {
         rawArgs: args,
         getSubcommand: (pos = 0) => args[pos] ?? null,
@@ -101,7 +101,7 @@ function createPrefixArgsReader(args: string[]): CommandArgsReader {
         getUserId: (_name, pos = 0) => parseMentionId(args[pos], "user"),
         getRoleId: (_name, pos = 0) => parseMentionId(args[pos], "role"),
         getChannelId: (_name, pos = 0) => parseMentionId(args[pos], "channel"),
-        getAttachmentUrl: () => null,
+        getAttachmentUrl: () => message?.attachments.first()?.url ?? null,
     };
 }
 
@@ -151,7 +151,7 @@ export class CommandRouter {
             locale,
             t,
             prefix: matchedPrefix,
-            args: createPrefixArgsReader(parts),
+            args: createPrefixArgsReader(parts, message),
             message,
             reply: async (payload) => {
                 if (!("send" in message.channel)) return null;

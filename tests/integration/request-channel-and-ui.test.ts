@@ -10,6 +10,7 @@ import {
     buildQueuePagePayload,
     CommandRegistry,
     extractRequestPayloadFromMessage,
+    parseNetscapeCookieEntries,
 } from "@rawon/discord";
 import type { SessionStateSnapshot } from "@rawon/music-core";
 import type { QueuedTrack } from "@rawon/shared";
@@ -206,5 +207,39 @@ describe("Request Channel Parser, Discord Components V2 UI & Command Parity", ()
         const i18n = new I18nService("en-US");
         const appCommands = registry.buildApplicationCommandsJson(i18n);
         expect(appCommands.length).toBe(32); // 31 slash commands + 1 message context menu
+
+        const loginCmd = appCommands.find((cmd) => cmd.name === "login");
+        const loginOptions = loginCmd?.options as Array<{ name: string }> | undefined;
+        expect(loginOptions?.some((opt) => opt.name === "cookies")).toBe(true);
+    });
+
+    it("parses Netscape cookies from multiline text, escaped env strings, and base64 blobs", () => {
+        const netscapeText = [
+            "# Netscape HTTP Cookie File",
+            ".youtube.com\tTRUE\t/\tTRUE\t1893456000\tSAPISID\tsecret_sapisid",
+            ".google.com\tTRUE\t/\tFALSE\t0\tNID\tsession_nid",
+            "malformed_line_only_three\tparts\there",
+        ].join("\n");
+
+        const direct = parseNetscapeCookieEntries(netscapeText);
+        expect(direct).toHaveLength(2);
+        expect(direct[0]).toMatchObject({
+            domain: ".youtube.com",
+            includeSubdomains: true,
+            path: "/",
+            secure: true,
+            expiration: 1893456000,
+            name: "SAPISID",
+            value: "secret_sapisid",
+        });
+
+        const escaped = parseNetscapeCookieEntries(netscapeText.replace(/\n/g, "\\n"));
+        expect(escaped).toHaveLength(2);
+        expect(escaped[1]?.name).toBe("NID");
+
+        const encoded = Buffer.from(netscapeText, "utf8").toString("base64");
+        const decoded = parseNetscapeCookieEntries(encoded);
+        expect(decoded).toHaveLength(2);
+        expect(decoded[0]?.value).toBe("secret_sapisid");
     });
 });

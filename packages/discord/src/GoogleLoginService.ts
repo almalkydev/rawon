@@ -3,7 +3,11 @@ import type { DatabaseStore } from "@rawon/database";
 import type { YtDlpClient } from "@rawon/providers";
 import type { AuthSessionRecord, Logger } from "@rawon/shared";
 import puppeteer, { type Browser } from "puppeteer-core";
-import type { CookieStore, NetscapeCookieEntry } from "./CookieStore.js";
+import {
+    type CookieStore,
+    type NetscapeCookieEntry,
+    parseNetscapeCookieEntries,
+} from "./CookieStore.js";
 
 function findChromiumExecutable(explicitPath?: string | null): string | null {
     const candidates = [
@@ -118,23 +122,7 @@ export class GoogleLoginService {
     }
 
     public async importRawNetscapeCookies(netscapeContent: string): Promise<AuthSessionRecord> {
-        const entries: NetscapeCookieEntry[] = [];
-        for (const rawLine of netscapeContent.split(/\r?\n/u)) {
-            const line = rawLine.trim();
-            if (!line || line.startsWith("#")) continue;
-            const cols = line.split("\t");
-            if (cols.length < 7) continue;
-            entries.push({
-                domain: cols[0] ?? ".youtube.com",
-                includeSubdomains: (cols[1] ?? "TRUE").toUpperCase() === "TRUE",
-                path: cols[2] ?? "/",
-                secure: (cols[3] ?? "TRUE").toUpperCase() === "TRUE",
-                expiration: Number.parseInt(cols[4] ?? "0", 10) || 0,
-                name: cols[5] ?? "",
-                value: cols.slice(6).join("\t"),
-            });
-        }
-
+        const entries = parseNetscapeCookieEntries(netscapeContent);
         if (entries.length === 0) {
             throw new Error("No valid Netscape cookie entries found.");
         }

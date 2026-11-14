@@ -106,3 +106,47 @@ export class CookieStore {
         if (existsSync(this.encryptedPath)) unlinkSync(this.encryptedPath);
     }
 }
+
+function parseNetscapeLines(text: string): NetscapeCookieEntry[] {
+    const entries: NetscapeCookieEntry[] = [];
+    const normalized =
+        text.includes("\\n") && !text.includes("\n") ? text.replace(/\\n/g, "\n") : text;
+    for (const rawLine of normalized.split(/\r?\n/u)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith("#")) continue;
+        const cols = line.split("\t");
+        if (cols.length < 7) continue;
+        entries.push({
+            domain: cols[0] ?? ".youtube.com",
+            includeSubdomains: (cols[1] ?? "TRUE").toUpperCase() === "TRUE",
+            path: cols[2] ?? "/",
+            secure: (cols[3] ?? "TRUE").toUpperCase() === "TRUE",
+            expiration: Number.parseInt(cols[4] ?? "0", 10) || 0,
+            name: cols[5] ?? "",
+            value: cols.slice(6).join("\t"),
+        });
+    }
+    return entries;
+}
+
+/**
+ * Parses Netscape cookies.txt content from plain text, single-line \n-escaped env vars,
+ * or base64-encoded cookies.txt strings.
+ */
+export function parseNetscapeCookieEntries(rawInput: string): NetscapeCookieEntry[] {
+    const direct = parseNetscapeLines(rawInput);
+    if (direct.length > 0) {
+        return direct;
+    }
+
+    const compact = rawInput.trim().replace(/\s+/gu, "");
+    if (compact.length >= 16 && /^[A-Za-z0-9+/=]+$/u.test(compact)) {
+        try {
+            const decoded = Buffer.from(compact, "base64").toString("utf8");
+            return parseNetscapeLines(decoded);
+        } catch {
+            return [];
+        }
+    }
+    return [];
+}

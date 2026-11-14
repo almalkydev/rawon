@@ -1,3 +1,4 @@
+import { assertSafePublicUrl } from "@rawon/shared";
 import { SlashCommandBuilder } from "discord.js";
 import { buildNoticeContainer } from "../../playerUi.js";
 import type { CommandDefinition } from "../../types.js";
@@ -35,6 +36,28 @@ export const loginCommand: CommandDefinition = {
                     .setName("logout")
                     .setDescription(
                         i18n.translate("commands.developers.login.slashLogoutDescription", "en-US"),
+                    ),
+            )
+            .addSubcommand((sub) =>
+                sub
+                    .setName("cookies")
+                    .setDescription(
+                        i18n.translate(
+                            "commands.developers.login.slashCookiesDescription",
+                            "en-US",
+                        ),
+                    )
+                    .addAttachmentOption((opt) =>
+                        opt
+                            .setName("file")
+                            .setDescription("Netscape cookies.txt file exported from YouTube")
+                            .setRequired(false),
+                    )
+                    .addStringOption((opt) =>
+                        opt
+                            .setName("text")
+                            .setDescription("Raw or base64-encoded Netscape cookies text")
+                            .setRequired(false),
                     ),
             ),
     execute: async (ctx) => {
@@ -135,11 +158,87 @@ export const loginCommand: CommandDefinition = {
             return;
         }
 
+        if (sub === "cookies") {
+            const attachmentUrl = ctx.args.getAttachmentUrl("file");
+            const inlineText = ctx.args.getString("text", 1, true);
+            let rawCookies = inlineText?.trim() ?? "";
+
+            if (attachmentUrl) {
+                await ctx.defer(true);
+                try {
+                    const safeUrl = await assertSafePublicUrl(attachmentUrl);
+                    const res = await fetch(safeUrl.toString(), {
+                        signal: AbortSignal.timeout(10_000),
+                    });
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}`);
+                    }
+                    const text = await res.text();
+                    if (text.length > 512_000) {
+                        throw new Error("Cookie file exceeds 512 KB limit.");
+                    }
+                    rawCookies = text;
+                } catch (err) {
+                    await ctx.editReply(
+                        buildNoticeContainer({
+                            colorHex: botSettings.embedColor,
+                            title: ctx.t("commands.developers.login.loginError"),
+                            description: `${botSettings.noEmoji} ${
+                                err instanceof Error ? err.message : String(err)
+                            }`,
+                        }),
+                    );
+                    return;
+                }
+            }
+
+            if (!rawCookies) {
+                await ctx.reply(
+                    buildNoticeContainer({
+                        colorHex: botSettings.embedColor,
+                        description: `${botSettings.noEmoji} ${ctx.t("commands.developers.login.cookiesMissingInput")}`,
+                    }),
+                    true,
+                );
+                return;
+            }
+
+            try {
+                await loginSvc.importRawNetscapeCookies(rawCookies);
+                if (ctx.message) {
+                    void ctx.message.delete().catch(() => undefined);
+                }
+                const msgPayload = buildNoticeContainer({
+                    colorHex: botSettings.embedColor,
+                    description: `${botSettings.yesEmoji} ${ctx.t("commands.developers.login.cookiesImported")}`,
+                });
+                if (attachmentUrl) {
+                    await ctx.editReply(msgPayload);
+                } else {
+                    await ctx.reply(msgPayload, true);
+                }
+            } catch (err) {
+                const errPayload = buildNoticeContainer({
+                    colorHex: botSettings.embedColor,
+                    title: ctx.t("commands.developers.login.loginError"),
+                    description: `${botSettings.noEmoji} ${
+                        err instanceof Error ? err.message : String(err)
+                    }`,
+                });
+                if (attachmentUrl) {
+                    await ctx.editReply(errPayload);
+                } else {
+                    await ctx.reply(errPayload, true);
+                }
+            }
+            return;
+        }
+
         await ctx.reply(
             buildNoticeContainer({
                 colorHex: botSettings.embedColor,
                 description: ctx.t("commands.developers.login.invalidSubcommand", {
-                    loginUsage: `\`${ctx.prefix}login <start | status | logout>\``,
+                    loginUsage: `\`${ctx.prefix}login <start | cookies | status | logout>\``,
                 }),
             }),
             true,

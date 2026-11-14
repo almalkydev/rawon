@@ -45,6 +45,13 @@ const V2_ADDITIONS_EN: JsonObject = {
                     set: "Loudness normalization default has been {state}.",
                 },
             },
+            login: {
+                slashCookiesDescription:
+                    "Import Netscape cookies.txt for headless/VPS YouTube playback",
+                cookiesMissingInput:
+                    "Attach a Netscape `cookies.txt` file or pass cookie text (`/login cookies file:...`).",
+                cookiesImported: "YouTube cookies imported and activated for playback.",
+            },
         },
     },
     requestChannel: {

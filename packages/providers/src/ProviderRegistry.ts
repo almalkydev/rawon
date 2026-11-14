@@ -17,6 +17,45 @@ import { SpotifyProvider } from "./SpotifyProvider.js";
 import { YouTubeProvider } from "./YouTubeProvider.js";
 import type { YtDlpClient } from "./YtDlpClient.js";
 
+function cleanFallbackQueryText(raw: string): string {
+    return raw
+        .replace(/\s*-\s*topic$/iu, "")
+        .replace(
+            /[[(](official(\s+music)?\s*(video|audio|lyric(s)?)|lyrics?|audio|visualizer|hd|4k|hq|full\s*song)[\])]/giu,
+            " ",
+        )
+        .replace(/\|.*$/u, " ")
+        .replace(/\s+/gu, " ")
+        .trim();
+}
+
+function buildFallbackSearchQueries(track: Track): string[] {
+    const cleanTitle = cleanFallbackQueryText(track.title);
+    const cleanAuthor = track.author ? cleanFallbackQueryText(track.author) : "";
+    const candidates: string[] = [];
+
+    if (cleanAuthor && cleanTitle) {
+        const titleLower = cleanTitle.toLowerCase();
+        const authorLower = cleanAuthor.toLowerCase();
+        if (!titleLower.includes(authorLower)) {
+            candidates.push(`${cleanAuthor} ${cleanTitle}`);
+        }
+    }
+    if (cleanTitle) {
+        candidates.push(cleanTitle);
+    }
+    const rawTitle = track.title.trim();
+    if (rawTitle) {
+        candidates.push(rawTitle);
+    }
+    if (track.author) {
+        const rawCombined = `${track.author} ${track.title}`.trim();
+        if (rawCombined) candidates.push(rawCombined);
+    }
+
+    return [...new Set(candidates)];
+}
+
 export interface ProviderRegistryOptions {
     ytdlp: YtDlpClient;
     spotifyClientId?: string;
@@ -202,12 +241,11 @@ export class ProviderRegistry {
         } catch (primaryErr) {
             this.recordFailure(providerKey);
 
-            // Don't silently swap tracks when caller blocked fallback or it's an auth/validation error
+            // Only block alternate-provider fallback when explicitly disallowed or strictly age-gated;
+            // allow bot-detection/network/403 errors to fall back cleanly to authorized alternate sources (e.g. SoundCloud).
             if (
                 options.allowFallbackProvider === false ||
-                (primaryErr instanceof ProviderError &&
-                    (primaryErr.category === "age_restricted" ||
-                        primaryErr.category === "bot_detection"))
+                (primaryErr instanceof ProviderError && primaryErr.category === "age_restricted")
             ) {
                 throw primaryErr;
             }
@@ -234,32 +272,50 @@ export class ProviderRegistry {
         primaryErr: unknown,
         signal?: AbortSignal,
     ): Promise<StreamDescriptor> {
-        const fallbackQuery = [track.author, track.title].filter(Boolean).join(" ").trim();
-        if (!fallbackQuery) {
+        const queries = buildFallbackSearchQueries(track);
+        if (queries.length === 0) {
             throw primaryErr;
         }
 
         const targetAlt = track.provider === "soundcloud" ? "youtube" : "soundcloud";
+        const expectFullTrack = track.duration === 0 || track.duration > 40;
         this.logger?.warn(
-            { err: primaryErr, track: track.title, targetAlt },
+            { err: primaryErr, track: track.title, targetAlt, queries },
             "Primary stream resolution failed; trying fallback provider",
         );
 
-        const altSearch = await this.search(fallbackQuery, targetAlt, 5, "direct").catch(
-            () => null,
-        );
-        // When falling back to SoundCloud, skip 30-second Go+ preview snippets if a full-length track exists
-        const candidate =
-            (targetAlt === "soundcloud"
-                ? altSearch?.items.find((item) => item.duration === 0 || item.duration > 35)
-                : undefined) ?? altSearch?.items[0];
-        if (!candidate) {
-            throw primaryErr;
+        const seenUrls = new Set<string>();
+        for (const fallbackQuery of queries) {
+            if (signal?.aborted) break;
+            const altSearch = await this.search(fallbackQuery, targetAlt, 8, "direct").catch(
+                () => null,
+            );
+            if (!altSearch || altSearch.items.length === 0) {
+                continue;
+            }
+
+            // When falling back to SoundCloud for a normal-length song, skip 30-second Go+ previews completely
+            const orderedCandidates =
+                targetAlt === "soundcloud" && expectFullTrack
+                    ? altSearch.items.filter((item) => item.duration === 0 || item.duration > 35)
+                    : altSearch.items;
+
+            for (const candidate of orderedCandidates.slice(0, 4)) {
+                if (signal?.aborted) break;
+                if (seenUrls.has(candidate.url)) continue;
+                seenUrls.add(candidate.url);
+
+                try {
+                    return targetAlt === "soundcloud"
+                        ? await this.soundcloud.getStreamDescriptor(candidate, signal)
+                        : await this.youtube.getStreamDescriptor(candidate, signal);
+                } catch {
+                    // Try next fallback candidate cleanly
+                }
+            }
         }
 
-        return targetAlt === "soundcloud"
-            ? this.soundcloud.getStreamDescriptor(candidate, signal)
-            : this.youtube.getStreamDescriptor(candidate, signal);
+        throw primaryErr;
     }
 
     public async findRelatedTracks(

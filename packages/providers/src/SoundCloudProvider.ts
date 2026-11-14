@@ -8,8 +8,8 @@ import {
 import type { ClassifiedQuery, MediaProvider, ProviderHealth, QueryKind } from "./interfaces.js";
 import { classifyQuery } from "./QueryClassifier.js";
 import {
-    extractBestAudioFormat,
     isHlsFormat,
+    selectPlayableFormatFromEntry,
     type YtDlpClient,
     type YtDlpEntry,
 } from "./YtDlpClient.js";
@@ -134,10 +134,12 @@ export class SoundCloudProvider implements MediaProvider {
             format: "bestaudio/best",
             signal,
         });
-        const fmt = extractBestAudioFormat(entry);
+        const fmt = await selectPlayableFormatFromEntry(entry, signal, {
+            excludePreviewFormats: true,
+        });
         if (!fmt?.url) {
             throw new ProviderError(
-                `No SoundCloud audio format for ${track.url}`,
+                `No playable SoundCloud audio format for ${track.url}`,
                 "unavailable",
                 true,
             );
