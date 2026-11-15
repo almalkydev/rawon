@@ -47,6 +47,7 @@ const envSchema = z.object({
     COOKIES_ENCRYPTION_KEY: z.string().default(""),
     YOUTUBE_COOKIES: z.string().default(""),
     YTDLP_FORCE_IPV4: yesNoSchema.transform((v) => v === "yes" || v === "true"),
+    POT_PROVIDER_URL: z.string().default(""),
     MAX_QUEUE_SIZE: optionalPositiveInt(500),
     RC_RATE_LIMIT_MAX: optionalPositiveInt(5),
     RC_RATE_LIMIT_WINDOW_MS: optionalPositiveInt(15_000),
@@ -90,6 +91,7 @@ export interface RawonConfig {
     cookiesEncryptionKey: string | null;
     youtubeCookies: string | null;
     ytDlpForceIpv4: boolean;
+    potProviderUrl: string | null;
     maxQueueSize: number;
     rcRateLimitMax: number;
     rcRateLimitWindowMs: number;
@@ -166,6 +168,7 @@ export function loadConfig(
         cookiesEncryptionKey: parsed.COOKIES_ENCRYPTION_KEY.trim() || null,
         youtubeCookies: parsed.YOUTUBE_COOKIES.trim() || null,
         ytDlpForceIpv4: parsed.YTDLP_FORCE_IPV4,
+        potProviderUrl: parsed.POT_PROVIDER_URL.trim().replace(/\/+$/u, "") || null,
         maxQueueSize: parsed.MAX_QUEUE_SIZE,
         rcRateLimitMax: parsed.RC_RATE_LIMIT_MAX,
         rcRateLimitWindowMs: parsed.RC_RATE_LIMIT_WINDOW_MS,

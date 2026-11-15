@@ -82,6 +82,7 @@ export interface YtDlpClientOptions {
     cookiesPath?: string | null;
     visitorData?: string | null;
     forceIpv4?: boolean;
+    potProviderUrl?: string | null;
     logger?: Logger;
 }
 
@@ -185,6 +186,7 @@ export class YtDlpClient {
     private readonly scriptsDir: string;
     private cookiesPath: string | null;
     private visitorData: string | null;
+    private potProviderUrl: string | null;
     private readonly defaultForceIpv4: boolean;
     private readonly logger?: Logger;
     private updateTimer: NodeJS.Timeout | null = null;
@@ -194,9 +196,22 @@ export class YtDlpClient {
         this.scriptsDir = resolve(options.cacheDir, "scripts");
         this.cookiesPath = options.cookiesPath ?? null;
         this.visitorData = options.visitorData ?? null;
+        this.potProviderUrl = options.potProviderUrl?.trim().replace(/\/+$/u, "") || null;
         this.defaultForceIpv4 = options.forceIpv4 === true;
         this.logger = options.logger;
         this.binaryPath = this.resolveInitialBinaryPath(options.binaryPath);
+    }
+
+    public setPotProviderUrl(url: string | null): void {
+        this.potProviderUrl = url?.trim().replace(/\/+$/u, "") || null;
+    }
+
+    public getPotProviderUrl(): string | null {
+        return this.potProviderUrl;
+    }
+
+    public isForceIpv4(): boolean {
+        return this.defaultForceIpv4;
     }
 
     public setCookiesPath(path: string | null): void {
@@ -305,7 +320,7 @@ export class YtDlpClient {
                 "node",
             ];
 
-            if (withRemoteComponents || hasActiveCookies) {
+            if (withRemoteComponents || hasActiveCookies || this.potProviderUrl) {
                 args.push("--remote-components", "ejs:github");
             }
 
@@ -327,6 +342,7 @@ export class YtDlpClient {
                         : options.extractorArgs;
                 args.push("--extractor-args", mergedExtractorArgs);
             }
+            this.appendPotProviderArgs(args, options.extractorArgs);
             if (options.flatPlaylist) args.push("--flat-playlist");
             if (options.noPlaylist) args.push("--no-playlist");
             if (options.yesPlaylist) args.push("--yes-playlist");
@@ -431,13 +447,13 @@ export class YtDlpClient {
             "ejs:github",
         ];
         if (hasActiveCookies) {
-            args.push(
-                "--extractor-args",
-                "youtube:player_client=web_creator,web,mweb,tv_downgraded,tv_simply,visionos",
-            );
+            args.push("--extractor-args", "youtube:player_client=mweb,web_creator,web,tv_simply");
+        } else if (this.potProviderUrl) {
+            args.push("--extractor-args", "youtube:player_client=mweb,tv_simply,android_vr");
         }
+        this.appendPotProviderArgs(args);
         const tmpCookiePath = this.appendAuthArgs(args, {
-            hasYoutubeExtractorArgs: hasActiveCookies,
+            hasYoutubeExtractorArgs: hasActiveCookies || Boolean(this.potProviderUrl),
         });
         args.push("--", targetUrl);
 
@@ -501,6 +517,12 @@ export class YtDlpClient {
             return local;
         }
         return "yt-dlp";
+    }
+
+    private appendPotProviderArgs(args: string[], existingExtractorArgs?: string): void {
+        if (!this.potProviderUrl) return;
+        if (existingExtractorArgs?.includes("youtubepot-bgutilhttp:")) return;
+        args.push("--extractor-args", `youtubepot-bgutilhttp:base_url=${this.potProviderUrl}`);
     }
 
     private appendAuthArgs(

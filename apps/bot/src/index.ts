@@ -111,7 +111,9 @@ async function bootstrap(): Promise<void> {
     const ytdlp = new YtDlpClient({
         binaryPath: config.ytDlpPath,
         cacheDir: config.cacheDir,
+        cookiesPath: join(config.dataDir, "cookies.txt"),
         forceIpv4: config.ytDlpForceIpv4,
+        potProviderUrl: config.potProviderUrl,
         logger,
     });
     await ytdlp.ensureBinary().catch((err) => {

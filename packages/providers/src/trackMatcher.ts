@@ -61,6 +61,38 @@ const STOP_WORDS = new Set([
     "by",
 ]);
 
+// Common short/function words that often appear inside song titles (e.g. "We Fell in Love in October")
+// and inside artist names (e.g. "girl in red"); never allow them alone to strip title words
+const WEAK_AUTHOR_OVERLAP_TOKENS = new Set([
+    "in",
+    "on",
+    "of",
+    "at",
+    "to",
+    "a",
+    "an",
+    "for",
+    "and",
+    "or",
+    "from",
+    "into",
+    "with",
+    "as",
+    "is",
+    "it",
+    "be",
+    "my",
+    "me",
+    "we",
+    "you",
+    "your",
+    "no",
+    "so",
+    "de",
+    "la",
+    "el",
+]);
+
 export function normalizeMatchText(input: string): string {
     return input
         .normalize("NFKD")
@@ -281,12 +313,25 @@ export function scoreTrackCandidate(track: Track, context: TrackMatchContext): n
         : parsedQuery.titleHint;
 
     // For free-form queries ("Solar Eclipse Drake Don Toliver" or "The Weeknd Blinding Lights"),
-    // strip candidate's verified author tokens from the query to isolate the intended song title
+    // strip candidate's verified author tokens only when they appear cleanly as a leading/trailing
+    // edge with at least one non-function token so shared prepositions like "in" never corrupt titles
     if (!context.targetTitle && !parsedQuery.artistHint && authorTokenSet.size > 0) {
         const rawQueryTokens = tokenizeMatchText(parsedQuery.titleHint);
-        const strippedTitleTokens = rawQueryTokens.filter((t) => !authorTokenSet.has(t));
-        if (strippedTitleTokens.length > 0 && strippedTitleTokens.length < rawQueryTokens.length) {
-            effectiveTitle = strippedTitleTokens.join(" ");
+        let start = 0;
+        while (start < rawQueryTokens.length && authorTokenSet.has(rawQueryTokens[start] ?? "")) {
+            start += 1;
+        }
+        let end = rawQueryTokens.length;
+        while (end > start && authorTokenSet.has(rawQueryTokens[end - 1] ?? "")) {
+            end -= 1;
+        }
+        const matchedEdgeTokens = [...rawQueryTokens.slice(0, start), ...rawQueryTokens.slice(end)];
+        const hasSubstantiveAuthorOverlap = matchedEdgeTokens.some(
+            (tok) => !WEAK_AUTHOR_OVERLAP_TOKENS.has(tok),
+        );
+        const remaining = rawQueryTokens.slice(start, end);
+        if (hasSubstantiveAuthorOverlap && remaining.length > 0) {
+            effectiveTitle = remaining.join(" ");
         }
     }
 

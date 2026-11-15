@@ -147,6 +147,8 @@ interface ParsedYouTubeCookieAuth {
     mtimeMs: number;
     cookieHeader: string;
     sapisid: string | null;
+    sapisid1p: string | null;
+    sapisid3p: string | null;
 }
 
 let cachedCookieAuth: ParsedYouTubeCookieAuth | null = null;
@@ -174,7 +176,7 @@ function loadYouTubeAuthFromCookiesFile(
             const isHttpOnly = line.startsWith("#HttpOnly_");
             if (line.startsWith("#") && !isHttpOnly) continue;
             const effective = isHttpOnly ? line.slice("#HttpOnly_".length) : line;
-            const cols = effective.split("\t");
+            const cols = effective.includes("\t") ? effective.split("\t") : effective.split(/\s+/u);
             if (cols.length < 7) continue;
             const domain = (cols[0] ?? "").toLowerCase();
             if (!domain.includes("youtube.com") && !domain.includes("google.com")) {
@@ -189,18 +191,29 @@ function loadYouTubeAuthFromCookiesFile(
         }
 
         if (cookieMap.size === 0) return null;
-        const cookieHeader = [...cookieMap.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
-        const sapisid =
-            cookieMap.get("SAPISID") ??
-            cookieMap.get("__Secure-3PAPISID") ??
-            cookieMap.get("__Secure-1PAPISID") ??
-            null;
+        const sapisid = cookieMap.get("SAPISID") ?? null;
+        const sapisid1p = cookieMap.get("__Secure-1PAPISID") ?? null;
+        const sapisid3p = cookieMap.get("__Secure-3PAPISID") ?? null;
+        const hasSessionAuth = Boolean(
+            sapisid ||
+                sapisid1p ||
+                sapisid3p ||
+                cookieMap.has("LOGIN_INFO") ||
+                cookieMap.has("SID") ||
+                cookieMap.has("__Secure-3PSID"),
+        );
+        if (!hasSessionAuth) {
+            return null;
+        }
 
+        const cookieHeader = [...cookieMap.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
         cachedCookieAuth = {
             cookiesPath,
             mtimeMs: st.mtimeMs,
             cookieHeader,
             sapisid,
+            sapisid1p,
+            sapisid3p,
         };
         return cachedCookieAuth;
     } catch {
@@ -208,10 +221,29 @@ function loadYouTubeAuthFromCookiesFile(
     }
 }
 
-function buildSapisidHashHeader(sapisid: string): string {
+function sha1SapisidHash(ts: number, cookieValue: string): string {
+    const digest = createHash("sha1")
+        .update(`${ts} ${cookieValue} ${YOUTUBE_ORIGIN}`)
+        .digest("hex");
+    return `${ts}_${digest}`;
+}
+
+function buildSapisidHashHeader(auth: ParsedYouTubeCookieAuth): string | null {
     const ts = Math.floor(Date.now() / 1000);
-    const digest = createHash("sha1").update(`${ts} ${sapisid} ${YOUTUBE_ORIGIN}`).digest("hex");
-    return `SAPISIDHASH ${ts}_${digest} SAPISID1PHASH ${ts}_${digest} SAPISID3PHASH ${ts}_${digest}`;
+    const parts: string[] = [];
+    const primary = auth.sapisid ?? auth.sapisid3p ?? auth.sapisid1p;
+    if (primary) {
+        parts.push(`SAPISIDHASH ${sha1SapisidHash(ts, primary)}`);
+    }
+    const oneParty = auth.sapisid1p ?? auth.sapisid;
+    if (oneParty) {
+        parts.push(`SAPISID1PHASH ${sha1SapisidHash(ts, oneParty)}`);
+    }
+    const threeParty = auth.sapisid3p ?? auth.sapisid;
+    if (threeParty) {
+        parts.push(`SAPISID3PHASH ${sha1SapisidHash(ts, threeParty)}`);
+    }
+    return parts.length > 0 ? parts.join(" ") : null;
 }
 
 export function extractVisitorDataFromSwJsData(text: string): string | null {
@@ -455,8 +487,9 @@ async function querySingleInnerTubeClient(
             headers.origin = YOUTUBE_ORIGIN;
             headers["x-origin"] = YOUTUBE_ORIGIN;
             headers["x-goog-authuser"] = "0";
-            if (cookieAuth.sapisid) {
-                headers.authorization = buildSapisidHashHeader(cookieAuth.sapisid);
+            const sapisidHeader = buildSapisidHashHeader(cookieAuth);
+            if (sapisidHeader) {
+                headers.authorization = sapisidHeader;
             }
         }
 
@@ -617,12 +650,13 @@ export async function resolveYouTubeInnerTubePlayer(
     }
 
     // 3. Authenticated web/TV InnerTube clients when cookies.txt is configured
+    // Pass null visitorData so an anonymous visitor ID never conflicts with the logged-in cookie session
     const cookieAuth = loadYouTubeAuthFromCookiesFile(options?.cookiesPath);
     if (cookieAuth && !signal?.aborted) {
         const authEntry = await raceClientSpecs(
             videoId,
             AUTHENTICATED_CLIENTS,
-            visitorData,
+            null,
             cookieAuth,
             signal,
         );

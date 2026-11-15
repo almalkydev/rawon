@@ -221,9 +221,9 @@ export class GoogleLoginService {
                             : null;
                     })
                     .catch(() => null);
-                if (visitorData) {
-                    this.ytdlp.setVisitorData(visitorData);
-                }
+                // Never inject anonymous visitorData when authenticated cookies are active;
+                // mismatched visitor/cookie sessions trigger YouTube bot verification checks
+                this.ytdlp.setVisitorData(null);
 
                 await this.store.saveAuthSession({
                     id: 1,

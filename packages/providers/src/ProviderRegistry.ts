@@ -140,7 +140,7 @@ export class ProviderRegistry {
             return this.resolveUrl(trimmed);
         }
 
-        const cacheKey = `search:v2:${source}:${mode}:${limit}:${trimmed.toLowerCase()}`;
+        const cacheKey = `search:v3:${source}:${mode}:${limit}:${trimmed.toLowerCase()}`;
         const cached = await this.metadataCache?.getJson<SearchResult>(cacheKey);
         if (cached) {
             if (source === "youtube" && cached.items[0]) {
@@ -177,7 +177,7 @@ export class ProviderRegistry {
         const safeUrl = (await assertSafePublicUrl(rawUrl)).toString();
         const classified = classifyQuery(safeUrl);
 
-        const cacheKey = `resolve:v2:${classified.sourceType}:${safeUrl}`;
+        const cacheKey = `resolve:v3:${classified.sourceType}:${safeUrl}`;
         const cached = await this.metadataCache?.getJson<SearchResult>(cacheKey);
         if (cached) {
             if (
@@ -221,7 +221,7 @@ export class ProviderRegistry {
     }
 
     public async hydrateTrack(track: Track): Promise<Track> {
-        const key = `hydrate:v2:${track.provider}:${track.id || track.url}`;
+        const key = `hydrate:v3:${track.provider}:${track.id || track.url}`;
         const cached = await this.metadataCache?.getJson<Track>(key);
         if (cached && cached.duration > 0 && cached.thumbnail) {
             return cached;

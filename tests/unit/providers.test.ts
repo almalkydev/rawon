@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { loadConfig } from "@rawon/config";
 import {
     classifyQuery,
     extractBestAudioFormat,
@@ -13,7 +17,7 @@ import {
     searchYouTubeMusicInnerTube,
     selectBestMatchingTrack,
     YouTubeProvider,
-    type YtDlpClient,
+    YtDlpClient,
 } from "@rawon/providers";
 import { ProviderError } from "@rawon/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1133,6 +1137,135 @@ describe("Provider Query Classification, Spotify Resolution & Lyrics", () => {
         for (const entry of ranked) {
             expect(hasUnrequestedVariant(entry.track, matchContext)).toBe(true);
             expect(entry.score).toBeLessThan(0);
+        }
+    });
+
+    it("ranks girl in red original 'we fell in love in october' above cover uploads despite shared preposition 'in'", () => {
+        const candidates = [
+            {
+                id: "FJX0JPXD2nM",
+                title: "we fell in love in october",
+                url: "https://music.youtube.com/watch?v=FJX0JPXD2nM",
+                duration: 185,
+                thumbnail: "",
+                author: "girl in red",
+                provider: "youtubemusic" as const,
+            },
+            {
+                id: "Cherry_cover",
+                title: "We fell in love in october",
+                url: "https://music.youtube.com/watch?v=Cherry_cover",
+                duration: 185,
+                thumbnail: "",
+                author: "Cherry",
+                provider: "youtubemusic" as const,
+            },
+            {
+                id: "SQFZkx72Uj0",
+                title: "We Fell in Love in October",
+                url: "https://music.youtube.com/watch?v=SQFZkx72Uj0",
+                duration: 328,
+                thumbnail: "",
+                author: "Nguyễn Thị Lan",
+                provider: "youtubemusic" as const,
+            },
+        ];
+
+        const bestTitleOnly = selectBestMatchingTrack(candidates, {
+            query: "We Fell in Love in October",
+        });
+        expect(bestTitleOnly?.id).toBe("FJX0JPXD2nM");
+
+        const bestWithArtist = selectBestMatchingTrack(candidates, {
+            query: "girl in red We Fell in Love in October",
+        });
+        expect(bestWithArtist?.id).toBe("FJX0JPXD2nM");
+    });
+
+    it("bounds fallback concurrency and recovers via unauthenticated wave when cookies fail", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 206 })),
+        );
+
+        const tmpDir = mkdtempSync(join(tmpdir(), "rawon-yt-cookie-wave-"));
+        const cookiesFile = join(tmpDir, "cookies.txt");
+        writeFileSync(
+            cookiesFile,
+            "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSAPISID\tdummy\n",
+            "utf8",
+        );
+
+        let maxConcurrent = 0;
+        let currentConcurrent = 0;
+        const ytdlpStub = {
+            getCookiesPath: () => cookiesFile,
+            getVisitorData: () => null,
+            getPotProviderUrl: () => "http://pot-provider:4416",
+            isForceIpv4: () => false,
+            dumpJson: vi.fn(
+                async (
+                    _target: string,
+                    opts?: { extractorArgs?: string; skipCookies?: boolean },
+                ) => {
+                    currentConcurrent += 1;
+                    maxConcurrent = Math.max(maxConcurrent, currentConcurrent);
+                    await new Promise((resolve) => setTimeout(resolve, 15));
+                    currentConcurrent -= 1;
+
+                    if (opts?.skipCookies && opts?.extractorArgs === "youtube:player_client=mweb") {
+                        return {
+                            id: "yt_recovered",
+                            title: "Solar Eclipse",
+                            duration: 219,
+                            formats: [
+                                {
+                                    format_id: "251",
+                                    url: "https://rr3.googlevideo.com/videoplayback?itag=251",
+                                    acodec: "opus",
+                                    vcodec: "none",
+                                    abr: 130,
+                                    asr: 48000,
+                                    audio_channels: 2,
+                                    ext: "webm",
+                                    protocol: "https",
+                                },
+                            ],
+                        };
+                    }
+
+                    throw new ProviderError(
+                        "YouTube requested bot-verification cookies",
+                        "bot_detection",
+                        false,
+                    );
+                },
+            ),
+        } as unknown as YtDlpClient;
+
+        try {
+            const yt = new YouTubeProvider(ytdlpStub);
+            const desc = await yt.getStreamDescriptor({
+                id: "eJFi2TK5174",
+                title: "Solar Eclipse",
+                url: "https://www.youtube.com/watch?v=eJFi2TK5174",
+                duration: 219,
+                thumbnail: "",
+                author: "Drake & Don Toliver",
+                provider: "youtube",
+            });
+            expect(desc.url).toContain("itag=251");
+            expect(maxConcurrent).toBeLessThanOrEqual(3);
+
+            const cfg = loadConfig({ POT_PROVIDER_URL: "http://pot-provider:4416/" });
+            expect(cfg.potProviderUrl).toBe("http://pot-provider:4416");
+            const client = new YtDlpClient({
+                cacheDir: tmpDir,
+                potProviderUrl: cfg.potProviderUrl,
+            });
+            expect(client.getPotProviderUrl()).toBe("http://pot-provider:4416");
+        } finally {
+            rmSync(tmpDir, { recursive: true, force: true });
         }
     });
 });

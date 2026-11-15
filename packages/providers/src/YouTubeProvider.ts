@@ -25,21 +25,42 @@ import {
 } from "./youtubeInnerTubePlayer.js";
 import { searchYouTubeMusicInnerTube, upgradeThumbnailUrl } from "./youtubeMusic.js";
 
-const YOUTUBE_FALLBACK_CLIENTS = [
-    "youtube:player_client=android",
-    "youtube:player_client=ios",
-    "youtube:player_client=tv_simply",
-    "youtube:player_client=android_vr",
-    "youtube:player_client=web_embedded",
-] as const;
+interface YtDlpFallbackCandidate {
+    extractorArgs: string;
+    skipCookies: boolean;
+}
 
-const YOUTUBE_COOKIE_FALLBACK_CLIENTS = [
-    "youtube:player_client=web_creator",
-    "youtube:player_client=mweb",
-    "youtube:player_client=web",
-    "youtube:player_client=tv_downgraded",
-    "youtube:player_client=web_embedded",
-] as const;
+// Keep fallback concurrency bounded (<= 3 per wave) to prevent yt-dlp/EJS memory spikes in Docker
+const YOUTUBE_FALLBACK_WAVES: ReadonlyArray<ReadonlyArray<YtDlpFallbackCandidate>> = [
+    [
+        { extractorArgs: "youtube:player_client=android", skipCookies: true },
+        { extractorArgs: "youtube:player_client=mweb", skipCookies: true },
+        { extractorArgs: "youtube:player_client=tv_simply", skipCookies: true },
+    ],
+    [
+        { extractorArgs: "youtube:player_client=android_vr", skipCookies: true },
+        { extractorArgs: "youtube:player_client=web_embedded", skipCookies: false },
+        { extractorArgs: "youtube:player_client=visionos", skipCookies: true },
+    ],
+];
+
+const YOUTUBE_COOKIE_FALLBACK_WAVES: ReadonlyArray<ReadonlyArray<YtDlpFallbackCandidate>> = [
+    [
+        { extractorArgs: "youtube:player_client=mweb", skipCookies: false },
+        { extractorArgs: "youtube:player_client=web_creator", skipCookies: false },
+        { extractorArgs: "youtube:player_client=tv_simply", skipCookies: false },
+    ],
+    [
+        { extractorArgs: "youtube:player_client=android", skipCookies: true },
+        { extractorArgs: "youtube:player_client=mweb", skipCookies: true },
+        { extractorArgs: "youtube:player_client=android_vr", skipCookies: true },
+    ],
+    [
+        { extractorArgs: "youtube:player_client=tv_simply", skipCookies: true },
+        { extractorArgs: "youtube:player_client=web_embedded", skipCookies: true },
+        { extractorArgs: "youtube:player_client=visionos", skipCookies: true },
+    ],
+];
 
 function positiveDuration(val: unknown): number {
     return typeof val === "number" && Number.isFinite(val) && val > 0 ? Math.floor(val) : 0;
@@ -417,9 +438,12 @@ export class YouTubeProvider implements MediaProvider {
         }
 
         const hasCookies = this.hasCookies();
-        const primaryCookieExtractorArgs = hasCookies
-            ? "youtube:player_client=web_creator,web,mweb,tv_downgraded,tv_simply,visionos"
-            : undefined;
+        const hasPotProvider = Boolean(this.ytdlp.getPotProviderUrl?.());
+        const primaryExtractorArgs = hasCookies
+            ? "youtube:player_client=mweb,web_creator,web,tv_simply"
+            : hasPotProvider
+              ? "youtube:player_client=mweb,tv_simply,android_vr"
+              : undefined;
 
         if (!fmt?.url && !signal?.aborted) {
             if (this.botBlockedUntil > Date.now() && !hasCookies) {
@@ -433,9 +457,7 @@ export class YouTubeProvider implements MediaProvider {
                 entry = await this.ytdlp.dumpJson(target, {
                     noPlaylist: true,
                     format: "bestaudio[acodec=opus]/bestaudio/best",
-                    ...(primaryCookieExtractorArgs
-                        ? { extractorArgs: primaryCookieExtractorArgs }
-                        : {}),
+                    ...(primaryExtractorArgs ? { extractorArgs: primaryExtractorArgs } : {}),
                     signal,
                 });
                 fmt = await selectPlayableFormatFromEntry(entry, signal);
@@ -451,18 +473,16 @@ export class YouTubeProvider implements MediaProvider {
             }
         }
 
-        const wasBotDetected =
+        let sawBotDetection =
             primaryErr instanceof ProviderError && primaryErr.category === "bot_detection";
 
-        // Dual-stack VPS hosts often trigger bot-checks on IPv6 while IPv4 passes
-        if (!fmt?.url && wasBotDetected && !signal?.aborted) {
+        // Dual-stack VPS hosts often trigger bot-checks on IPv6 while IPv4 passes; skip if already forced to IPv4
+        if (!fmt?.url && sawBotDetection && !this.ytdlp.isForceIpv4?.() && !signal?.aborted) {
             try {
                 const ipv4Entry = await this.ytdlp.dumpJson(target, {
                     noPlaylist: true,
                     format: "bestaudio[acodec=opus]/bestaudio/best",
-                    ...(primaryCookieExtractorArgs
-                        ? { extractorArgs: primaryCookieExtractorArgs }
-                        : {}),
+                    ...(primaryExtractorArgs ? { extractorArgs: primaryExtractorArgs } : {}),
                     forceIpv4: true,
                     signal,
                 });
@@ -480,80 +500,71 @@ export class YouTubeProvider implements MediaProvider {
             }
         }
 
-        // Fallback across alternate player clients concurrently when default formats fail or return 403
+        // Fallback across bounded waves (max 3 concurrent yt-dlp processes per wave) to protect container memory
         if (!fmt?.url && !signal?.aborted) {
-            const raceController = new AbortController();
-            const onParentAbort = () => raceController.abort();
-            signal?.addEventListener("abort", onParentAbort, { once: true });
+            const waves = hasCookies ? YOUTUBE_COOKIE_FALLBACK_WAVES : YOUTUBE_FALLBACK_WAVES;
+            for (const wave of waves) {
+                if (signal?.aborted || fmt?.url) break;
+                const raceController = new AbortController();
+                const onParentAbort = () => raceController.abort();
+                signal?.addEventListener("abort", onParentAbort, { once: true });
 
-            const fallbackCandidates: Array<{ extractorArgs: string; skipCookies: boolean }> =
-                hasCookies
-                    ? [
-                          ...YOUTUBE_COOKIE_FALLBACK_CLIENTS.map((extractorArgs) => ({
-                              extractorArgs,
-                              skipCookies: false,
-                          })),
-                          ...YOUTUBE_FALLBACK_CLIENTS.filter(
-                              (c) => c !== "youtube:player_client=web_embedded",
-                          ).map((extractorArgs) => ({
-                              extractorArgs,
-                              skipCookies: true,
-                          })),
-                      ]
-                    : YOUTUBE_FALLBACK_CLIENTS.map((extractorArgs) => ({
-                          extractorArgs,
-                          skipCookies: extractorArgs !== "youtube:player_client=web_embedded",
-                      }));
-
-            try {
-                const winner = await Promise.any(
-                    fallbackCandidates.map(async ({ extractorArgs, skipCookies }) => {
-                        const fallbackEntry = await this.ytdlp.dumpJson(target, {
-                            noPlaylist: true,
-                            format: "bestaudio/best",
-                            extractorArgs,
-                            forceIpv4: wasBotDetected,
-                            skipCookies,
-                            signal: raceController.signal,
-                        });
-                        const fallbackFmt = await selectPlayableFormatFromEntry(
-                            fallbackEntry,
-                            raceController.signal,
-                        );
-                        if (!fallbackFmt?.url) {
-                            throw new ProviderError(
-                                `No streamable format from ${extractorArgs}`,
-                                "unavailable",
-                                true,
+                try {
+                    const winner = await Promise.any(
+                        wave.map(async ({ extractorArgs, skipCookies }) => {
+                            const fallbackEntry = await this.ytdlp.dumpJson(target, {
+                                noPlaylist: true,
+                                format: "bestaudio/best",
+                                extractorArgs,
+                                forceIpv4: sawBotDetection,
+                                skipCookies,
+                                signal: raceController.signal,
+                            });
+                            const fallbackFmt = await selectPlayableFormatFromEntry(
+                                fallbackEntry,
+                                raceController.signal,
                             );
+                            if (!fallbackFmt?.url) {
+                                throw new ProviderError(
+                                    `No streamable format from ${extractorArgs}`,
+                                    "unavailable",
+                                    true,
+                                );
+                            }
+                            return { fallbackEntry, fallbackFmt };
+                        }),
+                    );
+                    raceController.abort();
+                    entry = winner.fallbackEntry;
+                    fmt = winner.fallbackFmt;
+                    this.botBlockedUntil = 0;
+                    this.entryCache.store(cacheKeys, winner.fallbackEntry);
+                    break;
+                } catch (aggErr) {
+                    const errors =
+                        aggErr instanceof AggregateError ? (aggErr.errors as unknown[]) : [aggErr];
+                    for (const fallbackErr of errors) {
+                        if (fallbackErr instanceof ProviderError) {
+                            if (fallbackErr.category === "age_restricted") {
+                                throw fallbackErr;
+                            }
+                            if (fallbackErr.category === "bot_detection") {
+                                sawBotDetection = true;
+                                if (!primaryErr) {
+                                    primaryErr = fallbackErr;
+                                }
+                            } else if (!primaryErr) {
+                                primaryErr = fallbackErr;
+                            }
                         }
-                        return { fallbackEntry, fallbackFmt };
-                    }),
-                );
-                raceController.abort();
-                entry = winner.fallbackEntry;
-                fmt = winner.fallbackFmt;
-                this.botBlockedUntil = 0;
-                this.entryCache.store(cacheKeys, winner.fallbackEntry);
-            } catch (aggErr) {
-                const errors =
-                    aggErr instanceof AggregateError ? (aggErr.errors as unknown[]) : [aggErr];
-                for (const fallbackErr of errors) {
-                    if (
-                        fallbackErr instanceof ProviderError &&
-                        fallbackErr.category === "age_restricted"
-                    ) {
-                        throw fallbackErr;
                     }
-                    if (!primaryErr && fallbackErr instanceof ProviderError) {
-                        primaryErr = fallbackErr;
-                    }
+                } finally {
+                    signal?.removeEventListener("abort", onParentAbort);
                 }
-                if (wasBotDetected) {
-                    this.botBlockedUntil = Date.now() + 90_000;
-                }
-            } finally {
-                signal?.removeEventListener("abort", onParentAbort);
+            }
+
+            if (!fmt?.url && sawBotDetection && !hasCookies) {
+                this.botBlockedUntil = Date.now() + 90_000;
             }
         }
 
