@@ -6,6 +6,7 @@ import {
     mkdirSync,
     readFileSync,
     statSync,
+    unlinkSync,
     writeFileSync,
 } from "node:fs";
 import { platform } from "node:os";
@@ -185,6 +186,7 @@ export class YtDlpClient {
     private readonly defaultForceIpv4: boolean;
     private readonly logger?: Logger;
     private updateTimer: NodeJS.Timeout | null = null;
+    private cookieTmpSeq = 0;
 
     public constructor(options: YtDlpClientOptions) {
         this.scriptsDir = resolve(options.cacheDir, "scripts");
@@ -404,13 +406,22 @@ export class YtDlpClient {
             "--remote-components",
             "ejs:github",
         ];
-        this.appendAuthArgs(args);
+        const tmpCookiePath = this.appendAuthArgs(args);
         args.push("--", targetUrl);
 
         const child = spawn(this.binaryPath, args, {
             stdio: ["ignore", "pipe", "pipe"],
             windowsHide: true,
         });
+        if (tmpCookiePath) {
+            child.once("close", () => {
+                try {
+                    unlinkSync(tmpCookiePath);
+                } catch {
+                    // Ignore cleanup race
+                }
+            });
+        }
 
         let stderrRing = "";
         child.stderr?.setEncoding("utf8");
@@ -460,22 +471,28 @@ export class YtDlpClient {
         return "yt-dlp";
     }
 
-    private appendAuthArgs(args: string[]): void {
+    private appendAuthArgs(args: string[]): string | null {
         if (this.visitorData) {
             args.push("--extractor-args", `youtube:visitor_data=${this.visitorData}`);
         }
         if (this.cookiesPath && existsSync(this.cookiesPath)) {
             const st = statSync(this.cookiesPath);
             if (st.size > 0) {
-                const tmpPath = join(dirname(this.cookiesPath), ".ytdlp-tmp-cookies.txt");
+                const seq = ++this.cookieTmpSeq;
+                const tmpPath = join(
+                    dirname(this.cookiesPath),
+                    `.ytdlp-tmp-cookies-${process.pid}-${seq}.txt`,
+                );
                 try {
                     copyFileSync(this.cookiesPath, tmpPath);
                     args.push("--cookies", tmpPath);
+                    return tmpPath;
                 } catch {
                     args.push("--cookies", this.cookiesPath);
                 }
             }
         }
+        return null;
     }
 
     private async probeVersion(bin: string): Promise<string | null> {
@@ -551,6 +568,15 @@ export class YtDlpClient {
             });
 
             child.once("error", (err) => {
+                const cookieIdx = args.indexOf("--cookies");
+                const cookieFile = cookieIdx >= 0 ? args[cookieIdx + 1] : undefined;
+                if (cookieFile?.includes(".ytdlp-tmp-cookies-")) {
+                    try {
+                        unlinkSync(cookieFile);
+                    } catch {
+                        // Ignore cleanup error
+                    }
+                }
                 if (settled) return;
                 settled = true;
                 clearTimeout(timer);
@@ -566,6 +592,15 @@ export class YtDlpClient {
             });
 
             child.once("close", (code) => {
+                const cookieIdx = args.indexOf("--cookies");
+                const cookieFile = cookieIdx >= 0 ? args[cookieIdx + 1] : undefined;
+                if (cookieFile?.includes(".ytdlp-tmp-cookies-")) {
+                    try {
+                        unlinkSync(cookieFile);
+                    } catch {
+                        // Ignore cleanup error
+                    }
+                }
                 if (settled) return;
                 settled = true;
                 clearTimeout(timer);
@@ -745,7 +780,7 @@ export async function probeCandidateStreamable(
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     signal?.addEventListener("abort", onAbort, { once: true });
-    const timer = setTimeout(() => controller.abort(), 2_500);
+    const timer = setTimeout(() => controller.abort(), 1_500);
 
     try {
         const baseHeaders: Record<string, string> = {

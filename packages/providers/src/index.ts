@@ -5,6 +5,7 @@ export * from "./ProviderRegistry.js";
 export * from "./QueryClassifier.js";
 export * from "./SoundCloudProvider.js";
 export * from "./SpotifyProvider.js";
+export * from "./trackMatcher.js";
 export * from "./YouTubeProvider.js";
 export * from "./YtDlpClient.js";
 export * from "./youtubeMusic.js";

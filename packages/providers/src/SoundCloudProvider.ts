@@ -7,6 +7,7 @@ import {
 } from "@rawon/shared";
 import type { ClassifiedQuery, MediaProvider, ProviderHealth, QueryKind } from "./interfaces.js";
 import { classifyQuery } from "./QueryClassifier.js";
+import { rankTrackCandidates } from "./trackMatcher.js";
 import {
     isHlsFormat,
     ResolvedEntryCache,
@@ -59,9 +60,10 @@ export class SoundCloudProvider implements MediaProvider {
     }
 
     public async search(query: string, limit = 10): Promise<SearchResult> {
-        const dump = await this.ytdlp.dumpJson(`scsearch${limit}:${query}`, {
+        const fetchLimit = Math.max(limit, 8);
+        const dump = await this.ytdlp.dumpJson(`scsearch${fetchLimit}:${query}`, {
             flatPlaylist: true,
-            playlistEnd: limit,
+            playlistEnd: fetchLimit,
         });
         const items: Track[] = [];
         for (const entry of dump.entries ?? []) {
@@ -69,7 +71,12 @@ export class SoundCloudProvider implements MediaProvider {
             const mapped = mapSoundCloudEntry(entry);
             if (mapped) items.push(mapped);
         }
-        return { type: "selection", items };
+        return {
+            type: "selection",
+            items: rankTrackCandidates(items, { query })
+                .slice(0, limit)
+                .map((r) => r.track),
+        };
     }
 
     public async resolveUrl(url: string, kind: QueryKind): Promise<SearchResult> {

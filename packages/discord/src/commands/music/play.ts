@@ -206,7 +206,7 @@ export const playCommand: CommandDefinition = {
                 requesterTag: ctx.userTag,
             });
 
-            await ctx.services
+            void ctx.services
                 .syncRequestChannelPlayer(ctx.guild.id, session.botId)
                 .catch(() => undefined);
 

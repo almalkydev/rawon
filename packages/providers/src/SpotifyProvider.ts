@@ -1,7 +1,18 @@
 import { type PlaylistMetadata, ProviderError, type SearchResult, type Track } from "@rawon/shared";
 import { classifyQuery } from "./QueryClassifier.js";
 
-export type PlayableTrackResolverFn = (searchQuery: string) => Promise<Track | null>;
+export interface SpotifyResolutionTarget {
+    title: string;
+    artists: string[];
+    durationSeconds?: number;
+    album?: string;
+    isrc?: string;
+}
+
+export type PlayableTrackResolverFn = (
+    searchQuery: string,
+    target?: SpotifyResolutionTarget,
+) => Promise<Track | null>;
 
 interface SpotifyTokenState {
     accessToken: string;
@@ -273,13 +284,20 @@ export class SpotifyProvider {
         const title = sp.name?.trim();
         if (!title) return null;
 
-        const artists =
+        const artistList =
             sp.artists
                 ?.map((a) => a.name?.trim())
-                .filter(Boolean)
-                .join(", ") ?? "";
+                .filter((name): name is string => Boolean(name)) ?? [];
+        const artists = artistList.join(", ");
+        const durationSeconds = sp.duration_ms ? Math.round(sp.duration_ms / 1000) : undefined;
         const query = artists ? `${artists} - ${title}` : title;
-        const equivalent = await this.resolvePlayableTrack(query);
+        const equivalent = await this.resolvePlayableTrack(query, {
+            title,
+            artists: artistList,
+            durationSeconds,
+            album: sp.album?.name,
+            isrc: sp.external_ids?.isrc,
+        });
         if (!equivalent) {
             return null;
         }

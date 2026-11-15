@@ -6,7 +6,10 @@ import {
     LyricsService,
     listAudioFormatCandidates,
     ProviderRegistry,
+    rankTrackCandidates,
     SpotifyProvider,
+    searchYouTubeMusicInnerTube,
+    selectBestMatchingTrack,
     YouTubeProvider,
     type YtDlpClient,
 } from "@rawon/providers";
@@ -688,5 +691,275 @@ describe("Provider Query Classification, Spotify Resolution & Lyrics", () => {
         const refreshedDesc = await yt.getStreamDescriptor(track);
         expect(refreshedDesc.url).toContain("ver=fresh_v2");
         expect(dumpCalls).toBe(2);
+    });
+
+    it("ranks original studio tracks above remixes, slowed/reverb, covers, and knock-offs unless explicitly requested", () => {
+        const candidates = [
+            {
+                id: "remix_1",
+                title: "Solar Eclipse (DJ Club Remix)",
+                url: "https://www.youtube.com/watch?v=remix_1",
+                duration: 219,
+                thumbnail: "",
+                author: "Random DJ",
+                provider: "youtube" as const,
+            },
+            {
+                id: "slowed_1",
+                title: "Solar Eclipse (Slowed + Reverb)",
+                url: "https://www.youtube.com/watch?v=slowed_1",
+                duration: 260,
+                thumbnail: "",
+                author: "Aesthetic Edits",
+                provider: "youtube" as const,
+            },
+            {
+                id: "cover_1",
+                title: "Solar Eclipse",
+                url: "https://www.youtube.com/watch?v=cover_1",
+                duration: 219,
+                thumbnail: "",
+                author: "Tribute Karaoke Band",
+                provider: "youtube" as const,
+            },
+            {
+                id: "orig_1",
+                title: "Solar Eclipse (Official Audio)",
+                url: "https://www.youtube.com/watch?v=orig_1",
+                duration: 219,
+                thumbnail: "",
+                author: "Drake - Topic",
+                provider: "youtubemusic" as const,
+            },
+        ];
+
+        const bestOriginal = selectBestMatchingTrack(candidates, {
+            query: "Drake & Don Toliver - Solar Eclipse",
+            targetTitle: "Solar Eclipse",
+            targetArtists: ["Drake", "Don Toliver"],
+            targetDurationSeconds: 219,
+        });
+        expect(bestOriginal?.id).toBe("orig_1");
+
+        // When user explicitly asks for slowed + reverb, the slowed version wins
+        const bestSlowed = selectBestMatchingTrack(candidates, {
+            query: "Solar Eclipse slowed reverb",
+        });
+        expect(bestSlowed?.id).toBe("slowed_1");
+
+        // When user explicitly asks for remix, the remix wins
+        const rankedRemix = rankTrackCandidates(candidates, {
+            query: "Solar Eclipse DJ Club Remix",
+        });
+        expect(rankedRemix[0]?.track.id).toBe("remix_1");
+    });
+
+    it("parses artist names accurately from YouTube Music InnerTube runs and skips media type badges like Song/Video", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => {
+                return new Response(
+                    JSON.stringify({
+                        contents: {
+                            sectionListRenderer: {
+                                contents: [
+                                    {
+                                        musicShelfRenderer: {
+                                            contents: [
+                                                {
+                                                    musicResponsiveListItemRenderer: {
+                                                        playlistItemData: {
+                                                            videoId: "vid_knockoff",
+                                                        },
+                                                        flexColumns: [
+                                                            {
+                                                                musicResponsiveListItemFlexColumnRenderer:
+                                                                    {
+                                                                        text: {
+                                                                            runs: [
+                                                                                {
+                                                                                    text: "Blinding Lights (8-Bit Tribute Remix)",
+                                                                                },
+                                                                            ],
+                                                                        },
+                                                                    },
+                                                            },
+                                                            {
+                                                                musicResponsiveListItemFlexColumnRenderer:
+                                                                    {
+                                                                        text: {
+                                                                            runs: [
+                                                                                { text: "Song" },
+                                                                                { text: " • " },
+                                                                                {
+                                                                                    text: "8-Bit Arcade",
+                                                                                },
+                                                                                { text: " • " },
+                                                                                { text: "3:20" },
+                                                                            ],
+                                                                        },
+                                                                    },
+                                                            },
+                                                        ],
+                                                    },
+                                                },
+                                                {
+                                                    musicResponsiveListItemRenderer: {
+                                                        playlistItemData: {
+                                                            videoId: "vid_orig111",
+                                                        },
+                                                        flexColumns: [
+                                                            {
+                                                                musicResponsiveListItemFlexColumnRenderer:
+                                                                    {
+                                                                        text: {
+                                                                            runs: [
+                                                                                {
+                                                                                    text: "Blinding Lights",
+                                                                                },
+                                                                            ],
+                                                                        },
+                                                                    },
+                                                            },
+                                                            {
+                                                                musicResponsiveListItemFlexColumnRenderer:
+                                                                    {
+                                                                        text: {
+                                                                            runs: [
+                                                                                { text: "Song" },
+                                                                                { text: " • " },
+                                                                                {
+                                                                                    text: "The Weeknd",
+                                                                                    navigationEndpoint:
+                                                                                        {
+                                                                                            browseEndpoint:
+                                                                                                {
+                                                                                                    browseEndpointContextSupportedConfigs:
+                                                                                                        {
+                                                                                                            browseEndpointContextMusicConfig:
+                                                                                                                {
+                                                                                                                    pageType:
+                                                                                                                        "MUSIC_PAGE_TYPE_ARTIST",
+                                                                                                                },
+                                                                                                        },
+                                                                                                },
+                                                                                        },
+                                                                                },
+                                                                                { text: " • " },
+                                                                                {
+                                                                                    text: "After Hours",
+                                                                                },
+                                                                                { text: " • " },
+                                                                                { text: "3:20" },
+                                                                            ],
+                                                                        },
+                                                                    },
+                                                            },
+                                                        ],
+                                                    },
+                                                },
+                                            ],
+                                        },
+                                    },
+                                ],
+                            },
+                        },
+                    }),
+                    { status: 200 },
+                );
+            }),
+        );
+
+        const tracks = await searchYouTubeMusicInnerTube("The Weeknd Blinding Lights", 1);
+        expect(tracks).toHaveLength(1);
+        expect(tracks[0]?.id).toBe("vid_orig111");
+        expect(tracks[0]?.author).toBe("The Weeknd");
+        expect(tracks[0]?.duration).toBe(200);
+    });
+
+    it("prefers original full track over top-ranked SoundCloud remix during fallback and fast-fails repeated YouTube bot blocks", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 206 })),
+        );
+
+        let ytDumpCount = 0;
+        const ytdlpStub = {
+            dumpJson: vi.fn(async (input: string) => {
+                if (input.includes("youtube.com")) {
+                    ytDumpCount += 1;
+                    throw new ProviderError(
+                        "YouTube requested bot-verification cookies",
+                        "bot_detection",
+                        false,
+                    );
+                }
+                if (input.startsWith("scsearch")) {
+                    return {
+                        entries: [
+                            {
+                                id: "sc_remix",
+                                title: "Solar Eclipse (Slowed + Reverb TikTok Remix)",
+                                webpage_url: "https://soundcloud.com/random/solar-eclipse-remix",
+                                duration: 220,
+                                uploader: "Random Edits",
+                            },
+                            {
+                                id: "sc_original",
+                                title: "Drake & Don Toliver - Solar Eclipse",
+                                webpage_url: "https://soundcloud.com/drake/solar-eclipse",
+                                duration: 219,
+                                uploader: "Drake",
+                            },
+                        ],
+                    };
+                }
+                if (input.includes("soundcloud.com/drake/solar-eclipse")) {
+                    return {
+                        id: "sc_original",
+                        title: "Drake & Don Toliver - Solar Eclipse",
+                        duration: 219,
+                        formats: [
+                            {
+                                format_id: "http_mp3_128",
+                                url: "https://cf-media.sndcdn.com/solar-eclipse-orig.mp3",
+                                acodec: "mp3",
+                                vcodec: "none",
+                                abr: 128,
+                                ext: "mp3",
+                                protocol: "https",
+                            },
+                        ],
+                    };
+                }
+                throw new Error(`Unexpected dumpJson input: ${input}`);
+            }),
+        } as unknown as YtDlpClient;
+
+        const registry = new ProviderRegistry({ ytdlp: ytdlpStub });
+        const track = {
+            id: "yt_solar_1",
+            title: "Solar Eclipse",
+            url: "https://www.youtube.com/watch?v=yt_solar_1",
+            duration: 219,
+            thumbnail: "",
+            author: "Drake & Don Toliver",
+            provider: "youtube" as const,
+        };
+
+        const desc1 = await registry.getStreamDescriptor(track);
+        expect(desc1.canonicalKey).toBe("soundcloud:sc_original");
+        expect(desc1.url).toContain("solar-eclipse-orig.mp3");
+        const firstTrackYtCalls = ytDumpCount;
+        expect(firstTrackYtCalls).toBeGreaterThan(0);
+
+        // Second track during active bot-detection cooldown skips dead YouTube spawns immediately (0 extra yt-dlp calls)
+        const desc2 = await registry.getStreamDescriptor({
+            ...track,
+            id: "yt_solar_2",
+            url: "https://www.youtube.com/watch?v=yt_solar_2",
+        });
+        expect(desc2.canonicalKey).toBe("soundcloud:sc_original");
+        expect(ytDumpCount).toBe(firstTrackYtCalls);
     });
 });

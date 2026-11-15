@@ -862,7 +862,8 @@ export class GuildMusicSession extends EventEmitter {
                 return { canonicalKey, descriptor };
             })();
 
-            const prepareGroup = Promise.all([connectTask, resolveTask, this.persistQueueFull()]);
+            void this.persistQueueFull();
+            const prepareGroup = Promise.all([connectTask, resolveTask]);
             prepareGroup.catch(() => undefined);
             const [, resolved] = await this.raceWithAbort(prepareGroup, abortController.signal);
             if (!resolved || generation !== this.playbackGeneration || this.destroyed) return;

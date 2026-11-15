@@ -14,6 +14,12 @@ import { LyricsService } from "./LyricsService.js";
 import { classifyQuery } from "./QueryClassifier.js";
 import { SoundCloudProvider } from "./SoundCloudProvider.js";
 import { SpotifyProvider } from "./SpotifyProvider.js";
+import {
+    parseArtistTitleFromQuery,
+    rankTrackCandidates,
+    selectBestMatchingTrack,
+    splitArtistNames,
+} from "./trackMatcher.js";
 import { YouTubeProvider } from "./YouTubeProvider.js";
 import type { YtDlpClient } from "./YtDlpClient.js";
 
@@ -91,9 +97,25 @@ export class ProviderRegistry {
             clientId: options.spotifyClientId ?? "",
             clientSecret: options.spotifyClientSecret ?? "",
             market: options.spotifyMarket ?? "US",
-            resolvePlayableTrack: async (query) => {
-                const res = await this.search(query, "youtube", 1, "dsp").catch(() => null);
-                return res?.items[0] ?? null;
+            resolvePlayableTrack: async (query, target) => {
+                const res = await this.search(query, "youtube", 8, "dsp").catch(() => null);
+                if (!res || res.items.length === 0) {
+                    return null;
+                }
+                return (
+                    selectBestMatchingTrack(
+                        res.items,
+                        {
+                            query,
+                            targetTitle: target?.title,
+                            targetArtists: target?.artists,
+                            targetDurationSeconds: target?.durationSeconds,
+                        },
+                        -25,
+                    ) ??
+                    res.items[0] ??
+                    null
+                );
             },
         });
         this.lyrics = new LyricsService(
@@ -279,6 +301,13 @@ export class ProviderRegistry {
 
         const targetAlt = track.provider === "soundcloud" ? "youtube" : "soundcloud";
         const expectFullTrack = track.duration === 0 || track.duration > 40;
+        const parsedTrack = parseArtistTitleFromQuery(track.title);
+        const targetTitle = parsedTrack.titleHint || track.title;
+        const targetArtists = [
+            ...splitArtistNames(track.author),
+            ...(parsedTrack.artistHint ? splitArtistNames(parsedTrack.artistHint) : []),
+        ];
+
         this.logger?.warn(
             { err: primaryErr, track: track.title, targetAlt, queries },
             "Primary stream resolution failed; trying fallback provider",
@@ -295,12 +324,24 @@ export class ProviderRegistry {
             }
 
             // When falling back to SoundCloud for a normal-length song, skip 30-second Go+ previews completely
-            const orderedCandidates =
+            const nonPreviewItems =
                 targetAlt === "soundcloud" && expectFullTrack
                     ? altSearch.items.filter((item) => item.duration === 0 || item.duration > 35)
                     : altSearch.items;
 
-            for (const candidate of orderedCandidates.slice(0, 4)) {
+            const rankedCandidates = rankTrackCandidates(nonPreviewItems, {
+                query: fallbackQuery,
+                targetTitle,
+                targetArtists,
+                targetDurationSeconds: track.duration > 0 ? track.duration : undefined,
+            });
+
+            // Reject knock-offs, unrequested remixes/covers/slowed versions, and unrelated tracks
+            const orderedCandidates = rankedCandidates
+                .filter((entry) => entry.score >= -10)
+                .map((entry) => entry.track);
+
+            for (const candidate of orderedCandidates.slice(0, 3)) {
                 if (signal?.aborted) break;
                 if (seenUrls.has(candidate.url)) continue;
                 seenUrls.add(candidate.url);

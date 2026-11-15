@@ -1,6 +1,7 @@
 import { MemoryLruCache } from "@rawon/cache";
 import { decodeHtmlEntities, type Track } from "@rawon/shared";
 import { extractYouTubeVideoId } from "./QueryClassifier.js";
+import { rankTrackCandidates } from "./trackMatcher.js";
 
 const INNERTUBE_SEARCH_URL = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false";
 const INNERTUBE_CONTEXT = {
@@ -121,14 +122,63 @@ function walkShelves(node: unknown, out: MusicShelfRendererItem[]): void {
     }
 }
 
-export async function searchYouTubeMusicInnerTube(
+const MEDIA_TYPE_BADGE_REGEX =
+    /^(?:song|video|single|album|ep|podcast|episode|playlist|artist|profile)$/iu;
+const VIEW_OR_PLAY_COUNT_REGEX =
+    /^\d+(?:[.,]\d+)?\s*[KMB]?\s*(?:views|plays|subscribers|listeners)$/iu;
+
+function extractArtistFromSecondaryColumn(
+    runs: Array<{ text?: string; navigationEndpoint?: unknown }> | undefined,
+    parts: readonly string[],
+): string | undefined {
+    if (Array.isArray(runs)) {
+        const artistNames: string[] = [];
+        for (const run of runs) {
+            const text = typeof run?.text === "string" ? decodeHtmlEntities(run.text).trim() : "";
+            if (!text || text === "•" || text === "," || text === "&") continue;
+            const navJson = run.navigationEndpoint ? JSON.stringify(run.navigationEndpoint) : "";
+            if (
+                navJson.includes("MUSIC_PAGE_TYPE_ARTIST") ||
+                navJson.includes("MUSIC_PAGE_TYPE_USER_CHANNEL")
+            ) {
+                if (!artistNames.includes(text)) {
+                    artistNames.push(text);
+                }
+            }
+        }
+        if (artistNames.length > 0) {
+            return artistNames.join(" & ");
+        }
+    }
+
+    const candidatePart = parts.find(
+        (part) =>
+            part.length > 0 &&
+            !MEDIA_TYPE_BADGE_REGEX.test(part) &&
+            !/^\d+:\d{2}(?::\d{2})?$/u.test(part) &&
+            !VIEW_OR_PLAY_COUNT_REGEX.test(part),
+    );
+    return candidatePart || undefined;
+}
+
+async function fetchInnerTubeShelfTracks(
     query: string,
-    limit = 10,
+    maxPool: number,
+    params: string | undefined,
+    seen: Set<string>,
     signal?: AbortSignal,
 ): Promise<Track[]> {
+    const bodyObj: Record<string, unknown> = {
+        context: INNERTUBE_CONTEXT,
+        query,
+    };
+    if (params) {
+        bodyObj.params = params;
+    }
+
     const response = await fetch(INNERTUBE_SEARCH_URL, {
         method: "POST",
-        signal: signal ?? AbortSignal.timeout(8_000),
+        signal: signal ?? AbortSignal.timeout(6_000),
         headers: {
             "content-type": "application/json",
             "user-agent":
@@ -136,12 +186,7 @@ export async function searchYouTubeMusicInnerTube(
             origin: "https://music.youtube.com",
             referer: "https://music.youtube.com/",
         },
-        body: JSON.stringify({
-            context: INNERTUBE_CONTEXT,
-            query,
-            // Params filter for Songs ("EgWKAQIIAWoKEAMQBBAJEAoQBQ==") when searching tracks
-            params: "EgWKAQIIAWoKEAMQBBAJEAoQBQ==",
-        }),
+        body: JSON.stringify(bodyObj),
     });
 
     if (!response.ok) {
@@ -153,10 +198,8 @@ export async function searchYouTubeMusicInnerTube(
     walkShelves(payload, rawItems);
 
     const tracks: Track[] = [];
-    const seen = new Set<string>();
-
     for (const item of rawItems) {
-        if (tracks.length >= limit) break;
+        if (tracks.length >= maxPool) break;
         const renderer = item.musicResponsiveListItemRenderer;
         if (!renderer) continue;
 
@@ -172,13 +215,12 @@ export async function searchYouTubeMusicInnerTube(
         );
         if (!title) continue;
 
-        const secondaryText = decodeHtmlEntities(
-            extractTextFromRuns(cols[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs),
-        );
+        const secondaryRuns = cols[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs;
+        const secondaryText = decodeHtmlEntities(extractTextFromRuns(secondaryRuns));
         const parts = secondaryText.split("•").map((s) => s.trim());
         const durationPart = parts.find((p) => /^\d+:\d{2}(?::\d{2})?$/u.test(p)) ?? "";
         const duration = durationPart ? parseDurationText(durationPart) : 0;
-        const author = parts[0] && !/^\d+:\d{2}$/u.test(parts[0]) ? parts[0] : undefined;
+        const author = extractArtistFromSecondaryColumn(secondaryRuns, parts);
 
         const thumbs = renderer.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails ?? [];
         const bestThumb = thumbs[thumbs.length - 1]?.url;
@@ -198,4 +240,45 @@ export async function searchYouTubeMusicInnerTube(
     }
 
     return tracks;
+}
+
+export async function searchYouTubeMusicInnerTube(
+    query: string,
+    limit = 10,
+    signal?: AbortSignal,
+): Promise<Track[]> {
+    const candidatePoolSize = Math.max(limit, 10);
+    const seen = new Set<string>();
+
+    // 1. Search official YouTube Music Songs shelf first ("EgWKAQIIAWoKEAMQBBAJEAoQBQ==")
+    const songTracks = await fetchInnerTubeShelfTracks(
+        query,
+        candidatePoolSize,
+        "EgWKAQIIAWoKEAMQBBAJEAoQBQ==",
+        seen,
+        signal,
+    );
+
+    const rankedSongs = rankTrackCandidates(songTracks, { query });
+    const bestSongScore = rankedSongs[0]?.score ?? Number.NEGATIVE_INFINITY;
+
+    // 2. If Songs shelf only returned a weak match, knock-off, or remix, merge unfiltered Top Result / Videos shelf
+    if ((songTracks.length === 0 || bestSongScore < 60) && !signal?.aborted) {
+        const unfilteredTracks = await fetchInnerTubeShelfTracks(
+            query,
+            candidatePoolSize,
+            undefined,
+            seen,
+            signal,
+        ).catch(() => [] as Track[]);
+
+        if (unfilteredTracks.length > 0) {
+            const combined = [...songTracks, ...unfilteredTracks];
+            return rankTrackCandidates(combined, { query })
+                .slice(0, limit)
+                .map((r) => r.track);
+        }
+    }
+
+    return rankedSongs.slice(0, limit).map((r) => r.track);
 }

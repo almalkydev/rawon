@@ -8,6 +8,7 @@ import {
 } from "@rawon/shared";
 import type { ClassifiedQuery, MediaProvider, ProviderHealth, QueryKind } from "./interfaces.js";
 import { classifyQuery, extractYouTubeVideoId, isYouTubeMusicUrl } from "./QueryClassifier.js";
+import { rankTrackCandidates } from "./trackMatcher.js";
 import {
     isHlsFormat,
     ResolvedEntryCache,
@@ -77,6 +78,7 @@ function mapEntryToTrack(
 export class YouTubeProvider implements MediaProvider {
     public readonly name = "youtube" as const;
     private readonly entryCache = new ResolvedEntryCache();
+    private botBlockedUntil = 0;
 
     public constructor(private readonly ytdlp: YtDlpClient) {}
 
@@ -98,20 +100,51 @@ export class YouTubeProvider implements MediaProvider {
         limit = 10,
         mode: SearchProviderMode = "dsp",
     ): Promise<SearchResult> {
+        const candidatePool = Math.max(limit, 8);
         if (mode === "dsp") {
             try {
-                const items = await searchYouTubeMusicInnerTube(query, limit);
+                const items = await searchYouTubeMusicInnerTube(query, candidatePool);
                 if (items.length > 0) {
-                    return { type: "selection", items };
+                    const ranked = rankTrackCandidates(items, { query });
+                    const bestScore = ranked[0]?.score ?? Number.NEGATIVE_INFINITY;
+                    // If YTM top candidate is an accurate match, return immediately without spawning yt-dlp
+                    if (bestScore >= 25) {
+                        return {
+                            type: "selection",
+                            items: ranked.slice(0, limit).map((r) => r.track),
+                        };
+                    }
+                    // Otherwise merge with direct YouTube search so obscure/unlisted originals aren't missed
+                    const directItems = await this.searchDirectYouTube(query, candidatePool).catch(
+                        () => [] as Track[],
+                    );
+                    const seenIds = new Set(items.map((t) => t.id));
+                    const combined = [...items, ...directItems.filter((t) => !seenIds.has(t.id))];
+                    return {
+                        type: "selection",
+                        items: rankTrackCandidates(combined, { query })
+                            .slice(0, limit)
+                            .map((r) => r.track),
+                    };
                 }
             } catch {
                 // Fall back to ytsearch via yt-dlp cleanly
             }
         }
 
-        const dump = await this.ytdlp.dumpJson(`ytsearch${limit}:${query}`, {
+        const items = await this.searchDirectYouTube(query, candidatePool);
+        return {
+            type: "selection",
+            items: rankTrackCandidates(items, { query })
+                .slice(0, limit)
+                .map((r) => r.track),
+        };
+    }
+
+    private async searchDirectYouTube(query: string, fetchLimit: number): Promise<Track[]> {
+        const dump = await this.ytdlp.dumpJson(`ytsearch${fetchLimit}:${query}`, {
             flatPlaylist: true,
-            playlistEnd: limit,
+            playlistEnd: fetchLimit,
         });
         const items: Track[] = [];
         for (const entry of dump.entries ?? []) {
@@ -119,7 +152,7 @@ export class YouTubeProvider implements MediaProvider {
             const mapped = mapEntryToTrack(entry);
             if (mapped) items.push(mapped);
         }
-        return { type: "selection", items };
+        return items;
     }
 
     public async resolveUrl(url: string, kind: QueryKind): Promise<SearchResult> {
@@ -216,6 +249,13 @@ export class YouTubeProvider implements MediaProvider {
         }
 
         if (!fmt?.url && !signal?.aborted) {
+            if (this.botBlockedUntil > Date.now()) {
+                throw new ProviderError(
+                    "YouTube requested bot-verification cookies",
+                    "bot_detection",
+                    false,
+                );
+            }
             try {
                 entry = await this.ytdlp.dumpJson(target, {
                     noPlaylist: true,
@@ -224,6 +264,7 @@ export class YouTubeProvider implements MediaProvider {
                 });
                 fmt = await selectPlayableFormatFromEntry(entry, signal);
                 if (fmt?.url && entry) {
+                    this.botBlockedUntil = 0;
                     this.entryCache.store(cacheKeys, entry);
                 }
             } catch (err) {
@@ -250,6 +291,8 @@ export class YouTubeProvider implements MediaProvider {
                 if (ipv4Fmt?.url) {
                     entry = ipv4Entry;
                     fmt = ipv4Fmt;
+                    this.botBlockedUntil = 0;
+                    this.entryCache.store(cacheKeys, ipv4Entry);
                 }
             } catch (ipv4Err) {
                 if (ipv4Err instanceof ProviderError && ipv4Err.category === "age_restricted") {
@@ -258,32 +301,60 @@ export class YouTubeProvider implements MediaProvider {
             }
         }
 
-        // Fallback across alternate player clients when default formats fail or return 403
+        // Fallback across alternate player clients concurrently when default formats fail or return 403
         if (!fmt?.url && !signal?.aborted) {
-            for (const extractorArgs of YOUTUBE_FALLBACK_CLIENTS) {
-                try {
-                    const fallbackEntry = await this.ytdlp.dumpJson(target, {
-                        noPlaylist: true,
-                        format: "bestaudio/best",
-                        extractorArgs,
-                        forceIpv4: wasBotDetected,
-                        signal,
-                    });
-                    const fallbackFmt = await selectPlayableFormatFromEntry(fallbackEntry, signal);
-                    if (fallbackFmt?.url) {
-                        entry = fallbackEntry;
-                        fmt = fallbackFmt;
-                        break;
-                    }
-                } catch (fallbackErr) {
-                    if (!primaryErr) primaryErr = fallbackErr;
+            const raceController = new AbortController();
+            const onParentAbort = () => raceController.abort();
+            signal?.addEventListener("abort", onParentAbort, { once: true });
+
+            try {
+                const winner = await Promise.any(
+                    YOUTUBE_FALLBACK_CLIENTS.map(async (extractorArgs) => {
+                        const fallbackEntry = await this.ytdlp.dumpJson(target, {
+                            noPlaylist: true,
+                            format: "bestaudio/best",
+                            extractorArgs,
+                            forceIpv4: wasBotDetected,
+                            signal: raceController.signal,
+                        });
+                        const fallbackFmt = await selectPlayableFormatFromEntry(
+                            fallbackEntry,
+                            raceController.signal,
+                        );
+                        if (!fallbackFmt?.url) {
+                            throw new ProviderError(
+                                `No streamable format from ${extractorArgs}`,
+                                "unavailable",
+                                true,
+                            );
+                        }
+                        return { fallbackEntry, fallbackFmt };
+                    }),
+                );
+                raceController.abort();
+                entry = winner.fallbackEntry;
+                fmt = winner.fallbackFmt;
+                this.botBlockedUntil = 0;
+                this.entryCache.store(cacheKeys, winner.fallbackEntry);
+            } catch (aggErr) {
+                const errors =
+                    aggErr instanceof AggregateError ? (aggErr.errors as unknown[]) : [aggErr];
+                for (const fallbackErr of errors) {
                     if (
                         fallbackErr instanceof ProviderError &&
                         fallbackErr.category === "age_restricted"
                     ) {
                         throw fallbackErr;
                     }
+                    if (!primaryErr && fallbackErr instanceof ProviderError) {
+                        primaryErr = fallbackErr;
+                    }
                 }
+                if (wasBotDetected) {
+                    this.botBlockedUntil = Date.now() + 90_000;
+                }
+            } finally {
+                signal?.removeEventListener("abort", onParentAbort);
             }
         }
 

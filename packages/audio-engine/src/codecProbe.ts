@@ -117,7 +117,7 @@ export function inspectHeaderBytes(header: Buffer, hint?: Partial<StreamDescript
 export async function peekStreamAndProbe(
     source: Readable,
     hint?: Partial<StreamDescriptor>,
-    peekBytes = 512,
+    peekBytes = 64,
 ): Promise<{ probe: ProbeResult; stream: Readable }> {
     const out = new PassThrough();
     const collected: Buffer[] = [];
