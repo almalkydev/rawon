@@ -4,8 +4,27 @@ import { SecurityError } from "./errors.js";
 
 export type DnsResolver = (hostname: string) => Promise<Array<{ address: string; family: number }>>;
 
+const dnsCache = new Map<
+    string,
+    { records: Array<{ address: string; family: number }>; expiresAt: number }
+>();
+const DNS_CACHE_TTL_MS = 5 * 60_000;
+
 const defaultDnsResolver: DnsResolver = async (hostname) => {
-    return lookup(hostname, { all: true, verbatim: true });
+    const key = hostname.toLowerCase();
+    const cached = dnsCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.records;
+    }
+    const records = await lookup(hostname, { all: true, verbatim: true });
+    if (records.length > 0) {
+        if (dnsCache.size >= 1000) {
+            const oldestKey = dnsCache.keys().next().value;
+            if (oldestKey) dnsCache.delete(oldestKey);
+        }
+        dnsCache.set(key, { records, expiresAt: Date.now() + DNS_CACHE_TTL_MS });
+    }
+    return records;
 };
 
 function parseIPv4(ip: string): number[] | null {

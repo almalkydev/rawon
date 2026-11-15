@@ -135,6 +135,19 @@ export const playCommand: CommandDefinition = {
 
         await ctx.defer();
 
+        // Prewarm Discord voice connection concurrently while search/URL resolution is in flight
+        let prewarmTransport: DiscordVoiceTransport | null = null;
+        let prewarmTransportUsed = false;
+        if (targetSession) {
+            targetSession.prewarmVoiceConnection();
+        } else {
+            prewarmTransport = new DiscordVoiceTransport({
+                client: bestRuntime.client,
+                logger: ctx.services.logger,
+            });
+            void prewarmTransport.connect(ctx.guild.id, voiceChannel.id).catch(() => undefined);
+        }
+
         try {
             let tracksToAdd: Track[] = [];
             let playlistTitle: string | undefined;
@@ -165,6 +178,9 @@ export const playCommand: CommandDefinition = {
             }
 
             if (tracksToAdd.length === 0) {
+                if (prewarmTransport) {
+                    void prewarmTransport.disconnect(ctx.guild.id).catch(() => undefined);
+                }
                 await ctx.editReply(
                     buildNoticeContainer({
                         colorHex: botSettings.embedColor,
@@ -181,12 +197,20 @@ export const playCommand: CommandDefinition = {
                     botId: bestRuntime.botId,
                     voiceChannelId: voiceChannel.id,
                     textChannelId: ctx.channel?.id ?? voiceChannel.id,
-                    createTransport: () =>
-                        new DiscordVoiceTransport({
+                    createTransport: () => {
+                        if (prewarmTransport) {
+                            prewarmTransportUsed = true;
+                            return prewarmTransport;
+                        }
+                        return new DiscordVoiceTransport({
                             client: bestRuntime.client,
                             logger: ctx.services.logger,
-                        }),
+                        });
+                    },
                 }));
+            if (prewarmTransport && !prewarmTransportUsed) {
+                void prewarmTransport.disconnect(ctx.guild.id).catch(() => undefined);
+            }
 
             const capacity = Math.max(0, guildConfig.maxQueueSize - session.queue.size);
             if (capacity === 0) {
@@ -231,6 +255,9 @@ export const playCommand: CommandDefinition = {
                 }),
             );
         } catch (err) {
+            if (prewarmTransport && !prewarmTransportUsed) {
+                void prewarmTransport.disconnect(ctx.guild.id).catch(() => undefined);
+            }
             await ctx.editReply(
                 buildNoticeContainer({
                     colorHex: botSettings.embedColor,

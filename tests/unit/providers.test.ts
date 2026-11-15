@@ -993,11 +993,15 @@ describe("Provider Query Classification, Spotify Resolution & Lyrics", () => {
         });
         expect(bestFreeForm?.id).toBe("eJFi2TK5174");
 
-        // 2. Direct mobile InnerTube player resolves itag=251 WebM/Opus with 0 yt-dlp calls
+        // 2. Direct VISIONOS InnerTube player resolves itag=251 WebM/Opus with 0 yt-dlp calls and 0 googlevideo probe RTTs
+        let googlevideoProbes = 0;
         vi.stubGlobal(
             "fetch",
             vi.fn(async (input: string | URL) => {
                 const url = String(input);
+                if (url.includes("googlevideo.com")) {
+                    googlevideoProbes += 1;
+                }
                 if (url.includes("sw.js_data")) {
                     return new Response(
                         ')]}\'\n["Cgt2aXNpdG9yRGF0YV90b2tlbl9leGFtcGxlX2FiY2RlZg%3D%3D"]',
@@ -1060,6 +1064,7 @@ describe("Provider Query Classification, Spotify Resolution & Lyrics", () => {
         });
 
         expect(dumpCalls).toBe(0);
+        expect(googlevideoProbes).toBe(0);
         expect(descriptor.directPassthroughEligible).toBe(true);
         expect(descriptor.codec).toBe("opus");
         expect(descriptor.container).toBe("webm");

@@ -253,6 +253,18 @@ export class RequestChannelService {
             void message.delete().catch(() => undefined);
         }
 
+        // Prewarm Discord voice connection concurrently while search/URL resolution is in flight
+        let prewarmTransport: DiscordVoiceTransport | null = null;
+        if (existingSession) {
+            existingSession.prewarmVoiceConnection();
+        } else {
+            prewarmTransport = new DiscordVoiceTransport({
+                client: runtime.client,
+                logger: this.logger,
+            });
+            void prewarmTransport.connect(message.guild.id, targetVcId).catch(() => undefined);
+        }
+
         const collectedTracks: Track[] = [...parsed.attachmentTracks];
         const errors: string[] = [];
 
@@ -293,18 +305,30 @@ export class RequestChannelService {
         }
 
         if (collectedTracks.length === 0) {
+            if (prewarmTransport) {
+                void prewarmTransport.disconnect(message.guild.id).catch(() => undefined);
+            }
             await replyEphemeralFeedback(t("requestChannel.noResults"));
             return true;
         }
 
+        let prewarmTransportUsed = false;
         const session = await this.sessions.getOrCreateSession({
             guildId: message.guild.id,
             botId: runtime.botId,
             voiceChannelId: targetVcId,
             textChannelId: message.channelId,
-            createTransport: () =>
-                new DiscordVoiceTransport({ client: runtime.client, logger: this.logger }),
+            createTransport: () => {
+                if (prewarmTransport) {
+                    prewarmTransportUsed = true;
+                    return prewarmTransport;
+                }
+                return new DiscordVoiceTransport({ client: runtime.client, logger: this.logger });
+            },
         });
+        if (prewarmTransport && !prewarmTransportUsed) {
+            void prewarmTransport.disconnect(message.guild.id).catch(() => undefined);
+        }
 
         const remainingCapacity = Math.max(0, guildConfig.maxQueueSize - session.queue.size);
         if (remainingCapacity === 0) {

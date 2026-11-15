@@ -37,10 +37,7 @@ export function upgradeThumbnailUrl(url: string | undefined): string {
     return trimmed;
 }
 
-export async function resolveSquareYouTubeMusicThumb(
-    videoId: string,
-    fallbackThumb = "",
-): Promise<string> {
+function resolveSquareYouTubeMusicThumbSync(videoId: string, fallbackThumb = ""): string {
     const cached = SQUARE_THUMB_CACHE.get(videoId);
     if (cached) return cached;
 
@@ -55,6 +52,13 @@ export async function resolveSquareYouTubeMusicThumb(
     );
     SQUARE_THUMB_CACHE.set(videoId, fallback);
     return fallback;
+}
+
+export async function resolveSquareYouTubeMusicThumb(
+    videoId: string,
+    fallbackThumb = "",
+): Promise<string> {
+    return resolveSquareYouTubeMusicThumbSync(videoId, fallbackThumb);
 }
 
 function extractTextFromRuns(runs: unknown): string {
@@ -185,6 +189,8 @@ async function fetchInnerTubeShelfTracks(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             origin: "https://music.youtube.com",
             referer: "https://music.youtube.com/",
+            "x-goog-fieldmask":
+                "contents.tabbedSearchResultsRenderer.tabs.tabRenderer.content.sectionListRenderer.contents.musicShelfRenderer.contents.musicResponsiveListItemRenderer(playlistItemData,overlay,flexColumns,thumbnail),contents.sectionListRenderer.contents.musicShelfRenderer.contents.musicResponsiveListItemRenderer(playlistItemData,overlay,flexColumns,thumbnail)",
         },
         body: JSON.stringify(bodyObj),
     });
@@ -232,7 +238,7 @@ async function fetchInnerTubeShelfTracks(
             url: `https://music.youtube.com/watch?v=${videoId}`,
             playableUrl: `https://www.youtube.com/watch?v=${videoId}`,
             duration,
-            thumbnail: await resolveSquareYouTubeMusicThumb(videoId, bestThumb),
+            thumbnail: resolveSquareYouTubeMusicThumbSync(videoId, bestThumb),
             author,
             isLive: false,
             provider: "youtubemusic",
@@ -263,7 +269,7 @@ export async function searchYouTubeMusicInnerTube(
     const bestSongScore = rankedSongs[0]?.score ?? Number.NEGATIVE_INFINITY;
 
     // 2. If Songs shelf only returned a weak match, knock-off, or remix, merge unfiltered Top Result / Videos shelf
-    if ((songTracks.length === 0 || bestSongScore < 60) && !signal?.aborted) {
+    if ((songTracks.length === 0 || bestSongScore < 40) && !signal?.aborted) {
         const unfilteredTracks = await fetchInnerTubeShelfTracks(
             query,
             candidatePoolSize,

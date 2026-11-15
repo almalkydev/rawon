@@ -143,6 +143,9 @@ export class ProviderRegistry {
         const cacheKey = `search:v2:${source}:${mode}:${limit}:${trimmed.toLowerCase()}`;
         const cached = await this.metadataCache?.getJson<SearchResult>(cacheKey);
         if (cached) {
+            if (source === "youtube" && cached.items[0]) {
+                this.youtube.warmTrackPlayerEntry?.(cached.items[0]);
+            }
             return cached;
         }
 
@@ -177,6 +180,12 @@ export class ProviderRegistry {
         const cacheKey = `resolve:v2:${classified.sourceType}:${safeUrl}`;
         const cached = await this.metadataCache?.getJson<SearchResult>(cacheKey);
         if (cached) {
+            if (
+                (classified.sourceType === "youtube" || classified.sourceType === "youtubemusic") &&
+                cached.items[0]
+            ) {
+                this.youtube.warmTrackPlayerEntry?.(cached.items[0]);
+            }
             return cached;
         }
 
@@ -261,6 +270,9 @@ export class ProviderRegistry {
             return desc;
         } catch (primaryErr) {
             this.recordFailure(providerKey);
+            if (providerKey === "youtube" || providerKey === "youtubemusic") {
+                this.youtube.invalidateTrackCache?.(track);
+            }
 
             // Only block alternate-provider fallback when explicitly disallowed or strictly age-gated;
             // allow bot-detection/network/403 errors to fall back cleanly to authorized alternate sources (e.g. SoundCloud).

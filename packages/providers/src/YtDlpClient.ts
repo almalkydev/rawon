@@ -55,6 +55,7 @@ export interface YtDlpEntry {
     asr?: number;
     audio_channels?: number;
     abr?: number;
+    extractor?: string;
     http_headers?: Record<string, string>;
     requested_formats?: YtDlpFormatEntry[];
     formats?: YtDlpFormatEntry[];

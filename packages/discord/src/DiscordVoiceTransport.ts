@@ -87,6 +87,7 @@ export class DiscordVoiceTransport implements VoiceTransport {
         null;
     private activePlaybackToken = 0;
     private startupWakeup: (() => void) | null = null;
+    private inflightConnect: { channelId: string; promise: Promise<void> } | null = null;
 
     public constructor(options: { client: Client; logger?: Logger }) {
         this.client = options.client;
@@ -128,6 +129,19 @@ export class DiscordVoiceTransport implements VoiceTransport {
     }
 
     public async connect(guildId: string, channelId: string): Promise<void> {
+        if (this.inflightConnect?.channelId === channelId) {
+            return this.inflightConnect.promise;
+        }
+        const task = this.connectInternal(guildId, channelId).finally(() => {
+            if (this.inflightConnect?.promise === task) {
+                this.inflightConnect = null;
+            }
+        });
+        this.inflightConnect = { channelId, promise: task };
+        return task;
+    }
+
+    private async connectInternal(guildId: string, channelId: string): Promise<void> {
         if (
             this.connection &&
             this.connection.state.status !== VoiceConnectionStatus.Destroyed &&
@@ -246,7 +260,7 @@ export class DiscordVoiceTransport implements VoiceTransport {
         const resource = createAudioResource(prepared.stream, {
             inputType,
             inlineVolume: inputType === StreamType.Raw && !prepared.volumeTransform,
-            silencePaddingFrames: 5,
+            silencePaddingFrames: 1,
         });
         prepared.stream.off("error", onEarlyStreamError);
 

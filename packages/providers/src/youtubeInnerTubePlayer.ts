@@ -79,7 +79,6 @@ const MOBILE_CLIENTS: readonly InnerTubeClientSpec[] = [
 
 const AUTHENTICATED_CLIENTS: readonly InnerTubeClientSpec[] = [
     ...PRIMARY_CLIENTS,
-    ...MOBILE_CLIENTS,
     {
         name: "TVHTML5",
         clientId: "7",
@@ -371,6 +370,8 @@ async function querySingleInnerTubeClient(
             "user-agent": spec.userAgent,
             "x-youtube-client-name": spec.clientId,
             "x-youtube-client-version": spec.clientVersion,
+            "x-goog-fieldmask":
+                "playabilityStatus(status,reason),videoDetails(videoId,title,lengthSeconds,channelId,author,isLiveContent,thumbnail),streamingData(expiresInSeconds,formats,adaptiveFormats,hlsManifestUrl)",
         };
         if (visitorData) {
             headers["x-goog-visitor-id"] = visitorData;
@@ -460,6 +461,8 @@ async function querySingleInnerTubeClient(
             is_live: details?.isLiveContent === true,
             thumbnails: thumbs,
             thumbnail: thumbs[thumbs.length - 1]?.url,
+            extractor:
+                spec.name === "VISIONOS" ? "youtube:innertube:visionos" : "youtube:innertube",
             http_headers: {
                 "User-Agent": spec.userAgent,
             },
@@ -525,25 +528,41 @@ export async function resolveYouTubeInnerTubePlayer(
         return null;
     }
 
-    // 1. Primary VISIONOS InnerTube client (returns direct HTTP 200 Opus 251 streams without 1MB PO-token cutoff)
-    const primaryEntry = await raceClientSpecs(videoId, PRIMARY_CLIENTS, visitorData, null, signal);
+    const cookieAuth = loadYouTubeAuthFromCookiesFile(options?.cookiesPath);
+
+    // 1. Primary VISIONOS InnerTube client (with cookieAuth immediately when available so VPS IPs don't waste an RTT)
+    const primaryEntry = await raceClientSpecs(
+        videoId,
+        PRIMARY_CLIENTS,
+        visitorData,
+        cookieAuth,
+        signal,
+    );
     if (primaryEntry) {
         return primaryEntry;
     }
 
-    // 2. If unauthenticated VISIONOS was challenged (e.g. datacenter VPS IP or age-gate)
-    // and cookies.txt is available, race authenticated SAPISIDHASH clients
-    const cookieAuth = loadYouTubeAuthFromCookiesFile(options?.cookiesPath);
+    // 2. If cookieAuth was used and failed (e.g. expired cookies), try unauthenticated VISIONOS, or vice-versa
     if (cookieAuth && !signal?.aborted) {
-        const authEntry = await raceClientSpecs(
+        const unauthPrimary = await raceClientSpecs(
             videoId,
-            AUTHENTICATED_CLIENTS,
+            PRIMARY_CLIENTS,
+            visitorData,
+            null,
+            signal,
+        );
+        if (unauthPrimary) {
+            return unauthPrimary;
+        }
+        const authFallback = await raceClientSpecs(
+            videoId,
+            AUTHENTICATED_CLIENTS.slice(1),
             visitorData,
             cookieAuth,
             signal,
         );
-        if (authEntry) {
-            return authEntry;
+        if (authFallback) {
+            return authFallback;
         }
     }
 

@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { PassThrough, Readable } from "node:stream";
+import { PassThrough, type Readable } from "node:stream";
 import type { AudioPipeline, PreparedAudioStream } from "@rawon/audio-engine";
 import { type DiskAudioCache, hashCanonicalAudioKey, type PrefetchCoordinator } from "@rawon/cache";
 import { createDefaultPlayerState } from "@rawon/config";
@@ -259,6 +259,11 @@ export class GuildMusicSession extends EventEmitter {
             pipelineMode: this.pipelineMode,
             startedAt: this.segmentStartedMonotonicMs,
         };
+    }
+
+    public prewarmVoiceConnection(): void {
+        if (this.destroyed || !this.voiceChannelId) return;
+        void this.transport.connect(this.guildId, this.voiceChannelId).catch(() => undefined);
     }
 
     public async addAndMaybePlay(inputs: {
@@ -849,7 +854,7 @@ export class GuildMusicSession extends EventEmitter {
         try {
             const connectTask = (async () => {
                 await this.transport.connect(this.guildId, this.voiceChannelId);
-                await this.transport
+                void this.transport
                     .ensureStageSpeaker?.(this.guildId, this.voiceChannelId)
                     .catch(() => undefined);
             })();
@@ -900,22 +905,34 @@ export class GuildMusicSession extends EventEmitter {
                 teeSourceStream = spawned.stream;
             } else if (
                 descriptor.directPassthroughEligible &&
-                this.botSettings.enableAudioCache &&
-                this.diskCache &&
                 !descriptor.cacheFilePath &&
                 !descriptor.isLive &&
                 seekSeconds === 0 &&
                 descriptor.sourceType === "url" &&
-                !isHlsStreamDescriptor(descriptor) &&
-                canCacheDescriptorUnderTrackKey(queued.track, descriptor)
+                !isHlsStreamDescriptor(descriptor)
             ) {
-                const teed = await this.tryTeeCacheStream(
-                    canonicalKey,
-                    descriptor,
-                    abortController.signal,
-                );
-                if (teed) {
-                    teeSourceStream = teed;
+                if (
+                    this.botSettings.enableAudioCache &&
+                    this.diskCache &&
+                    canCacheDescriptorUnderTrackKey(queued.track, descriptor)
+                ) {
+                    const teed = await this.tryTeeCacheStream(
+                        canonicalKey,
+                        descriptor,
+                        abortController.signal,
+                    );
+                    if (teed) {
+                        teeSourceStream = teed;
+                    }
+                }
+                if (!teeSourceStream && !abortController.signal.aborted) {
+                    const directStream = await this.openDirectHttpStream(
+                        descriptor,
+                        abortController.signal,
+                    );
+                    if (directStream) {
+                        teeSourceStream = directStream;
+                    }
                 }
             }
 
@@ -1057,6 +1074,12 @@ export class GuildMusicSession extends EventEmitter {
             );
 
             try {
+                if (
+                    queued.track.provider === "youtube" ||
+                    queued.track.provider === "youtubemusic"
+                ) {
+                    this.providers.youtube?.invalidateTrackCache?.(queued.track);
+                }
                 // Force fresh descriptor with provider fallback on retry (and bypass primary if retry #1 still failed)
                 const freshDesc = await this.providers.getStreamDescriptor(queued.track, {
                     allowFallbackProvider: true,
@@ -1182,11 +1205,12 @@ export class GuildMusicSession extends EventEmitter {
                 descriptor.url.includes("googlevideo.com") &&
                 Number.isFinite(urlClen) &&
                 urlClen > 0;
+            const initialChunkSize = 128 * 1024;
             const rangeChunkSize = 512 * 1024;
             const initialHeaders: Record<string, string> = {
                 ...(descriptor.headers ?? {}),
                 ...(useChunkedRange
-                    ? { Range: `bytes=0-${Math.min(rangeChunkSize - 1, urlClen - 1)}` }
+                    ? { Range: `bytes=0-${Math.min(initialChunkSize - 1, urlClen - 1)}` }
                     : {}),
             };
 
@@ -1268,6 +1292,93 @@ export class GuildMusicSession extends EventEmitter {
                 throw err;
             }
             this.logger?.debug({ err, canonicalKey }, "Tee-to-cache fallback to direct pipeline");
+            return null;
+        }
+    }
+
+    private async openDirectHttpStream(
+        descriptor: StreamDescriptor,
+        signal: AbortSignal,
+    ): Promise<Readable | null> {
+        if (isHlsStreamDescriptor(descriptor)) {
+            return null;
+        }
+        let initialBody: import("node:stream/web").ReadableStream<Uint8Array> | null = null;
+        try {
+            const clenMatch = /[?&]clen=(\d+)/u.exec(descriptor.url);
+            const urlClen = clenMatch?.[1] ? Number.parseInt(clenMatch[1], 10) : 0;
+            const useChunkedRange =
+                descriptor.url.includes("googlevideo.com") &&
+                Number.isFinite(urlClen) &&
+                urlClen > 0;
+            const initialChunkSize = 128 * 1024;
+            const rangeChunkSize = 512 * 1024;
+            const initialHeaders: Record<string, string> = {
+                ...(descriptor.headers ?? {}),
+                ...(useChunkedRange
+                    ? { Range: `bytes=0-${Math.min(initialChunkSize - 1, urlClen - 1)}` }
+                    : {}),
+            };
+
+            const initialRes = await this.fetchWithTimeout(
+                descriptor.url,
+                { headers: initialHeaders },
+                signal,
+                8_000,
+            );
+            if (
+                initialRes.status === 401 ||
+                initialRes.status === 403 ||
+                initialRes.status === 404 ||
+                initialRes.status === 410
+            ) {
+                throw new ExpiredStreamError(
+                    `Stream URL expired (HTTP ${initialRes.status})`,
+                    initialRes.status,
+                );
+            }
+            if (!initialRes.ok || !initialRes.body) {
+                return null;
+            }
+            if (isNonAudioContentType(initialRes.headers.get("content-type"))) {
+                await initialRes.body.cancel().catch(() => undefined);
+                return null;
+            }
+
+            initialBody = initialRes.body as import("node:stream/web").ReadableStream<Uint8Array>;
+            const contentRangeHeader = initialRes.headers.get("content-range");
+            const rangeTotalMatch = contentRangeHeader
+                ? /\/(\d+)$/u.exec(contentRangeHeader)
+                : null;
+            const contentLengthHeader = initialRes.headers.get("content-length");
+            const expectedTotalBytes = rangeTotalMatch?.[1]
+                ? Number.parseInt(rangeTotalMatch[1], 10)
+                : useChunkedRange
+                  ? urlClen
+                  : contentLengthHeader
+                    ? Number.parseInt(contentLengthHeader, 10)
+                    : Number.NaN;
+            const canResumeRanges = Number.isFinite(expectedTotalBytes) && expectedTotalBytes > 0;
+
+            const out = new PassThrough({ highWaterMark: 256 * 1024 });
+            void this.pumpResumableHttpBody(
+                out,
+                initialBody,
+                descriptor,
+                expectedTotalBytes,
+                canResumeRanges,
+                signal,
+                useChunkedRange ? rangeChunkSize : 0,
+            );
+            initialBody = null;
+            return out;
+        } catch (err) {
+            if (initialBody) {
+                await initialBody.cancel().catch(() => undefined);
+            }
+            if (err instanceof ExpiredStreamError) {
+                throw err;
+            }
             return null;
         }
     }
@@ -1517,15 +1628,8 @@ export class GuildMusicSession extends EventEmitter {
                         return;
                     }
 
-                    const res = await fetch(desc.url, { headers: desc.headers, signal });
-                    if (!res.ok || !res.body) return;
-                    if (isNonAudioContentType(res.headers.get("content-type"))) {
-                        await res.body.cancel().catch(() => undefined);
-                        return;
-                    }
-                    const nodeStream = Readable.fromWeb(
-                        res.body as import("node:stream/web").ReadableStream<Uint8Array>,
-                    );
+                    const nodeStream = await this.openDirectHttpStream(desc, signal);
+                    if (!nodeStream) return;
                     const { completion } = await diskCache.cacheFromStream(
                         canonicalKey,
                         nodeStream,
