@@ -202,8 +202,16 @@ export class YtDlpClient {
         this.cookiesPath = path;
     }
 
+    public getCookiesPath(): string | null {
+        return this.cookiesPath;
+    }
+
     public setVisitorData(visitorData: string | null): void {
         this.visitorData = visitorData;
+    }
+
+    public getVisitorData(): string | null {
+        return this.visitorData;
     }
 
     public getBinaryPath(): string {
@@ -808,7 +816,7 @@ export async function probeCandidateStreamable(
         if (!isHlsFormat(fmt)) {
             const res = await fetch(fmt.url, {
                 method: "GET",
-                headers: { ...baseHeaders, Range: "bytes=0-63" },
+                headers: baseHeaders,
                 signal: controller.signal,
             });
             await res.body?.cancel().catch(() => undefined);
@@ -858,6 +866,7 @@ export async function selectPlayableFormatFromEntry(
     signal?: AbortSignal,
     options: { excludePreviewFormats?: boolean; maxCandidates?: number } = {},
 ): Promise<YtDlpFormatEntry | null> {
+    if (!entry) return null;
     let candidates = listAudioFormatCandidates(entry);
     if (options.excludePreviewFormats) {
         const nonPreview = candidates.filter(

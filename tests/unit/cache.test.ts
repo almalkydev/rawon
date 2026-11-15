@@ -1,8 +1,13 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { DiskAudioCache, MemoryLruCache, PrefetchCoordinator } from "@rawon/cache";
+import {
+    DiskAudioCache,
+    hashCanonicalAudioKey,
+    MemoryLruCache,
+    PrefetchCoordinator,
+} from "@rawon/cache";
 import { afterEach, describe, expect, it } from "vitest";
 
 const tempDirs: string[] = [];
@@ -199,5 +204,35 @@ describe("MemoryLruCache, DiskAudioCache & PrefetchCoordinator", () => {
         await new Promise((r) => setTimeout(r, 90));
         expect(cancelled).toBe(true);
         expect(coordinator.getActiveCount()).toBe(0);
+    });
+
+    it("purges legacy schema entries and poisoned YouTube MP3 fallback cache files on initialize", async () => {
+        const dir = makeTempDir("rawon-cache-purge-");
+        const keyLegacy = "youtubemusic:eJFi2TK5174";
+        const hashLegacy = hashCanonicalAudioKey(keyLegacy);
+
+        // Simulate a poisoned v1 SoundCloud MP3 saved under a YouTube Music canonical key
+        writeFileSync(join(dir, `${hashLegacy}.mp3`), Buffer.alloc(128, 0x55));
+        writeFileSync(
+            join(dir, `${hashLegacy}.meta.json`),
+            JSON.stringify({
+                canonicalKey: keyLegacy,
+                hash: hashLegacy,
+                fileName: `${hashLegacy}.mp3`,
+                container: "mp3",
+                byteSize: 128,
+                createdAt: Date.now(),
+                lastAccessedAt: Date.now(),
+            }),
+        );
+
+        const disk = new DiskAudioCache({
+            cacheDir: dir,
+            minValidBytes: 64,
+        });
+        await disk.initialize();
+
+        expect(await disk.get(keyLegacy)).toBeNull();
+        expect(disk.has(keyLegacy)).toBe(false);
     });
 });

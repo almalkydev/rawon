@@ -91,6 +91,26 @@ export function getCanonicalTrackKey(track: Pick<Track, "provider" | "id" | "url
     return `${track.provider}:${track.id || track.url}`;
 }
 
+export function canCacheDescriptorUnderTrackKey(
+    track: Pick<Track, "provider" | "id" | "url">,
+    descriptor: Pick<StreamDescriptor, "canonicalKey">,
+): boolean {
+    if (track.provider === "youtube" || track.provider === "youtubemusic") {
+        if (
+            !descriptor.canonicalKey.startsWith("youtube:") &&
+            !descriptor.canonicalKey.startsWith("youtubemusic:")
+        ) {
+            return false;
+        }
+        const expectedSuffix = `:${track.id || track.url}`;
+        return descriptor.canonicalKey.endsWith(expectedSuffix);
+    }
+    if (track.provider === "spotify" && descriptor.canonicalKey.startsWith("soundcloud:")) {
+        return false;
+    }
+    return true;
+}
+
 export class GuildMusicSession extends EventEmitter {
     public readonly guildId: string;
     public readonly botId: string;
@@ -886,7 +906,8 @@ export class GuildMusicSession extends EventEmitter {
                 !descriptor.isLive &&
                 seekSeconds === 0 &&
                 descriptor.sourceType === "url" &&
-                !isHlsStreamDescriptor(descriptor)
+                !isHlsStreamDescriptor(descriptor) &&
+                canCacheDescriptorUnderTrackKey(queued.track, descriptor)
             ) {
                 const teed = await this.tryTeeCacheStream(
                     canonicalKey,
@@ -1135,7 +1156,9 @@ export class GuildMusicSession extends EventEmitter {
         }
 
         const fresh = await this.providers.getStreamDescriptor(track, { signal });
-        this.activeDescriptorCache.set(canonicalKey, fresh);
+        if (canCacheDescriptorUnderTrackKey(track, fresh)) {
+            this.activeDescriptorCache.set(canonicalKey, fresh);
+        }
         return fresh;
     }
 
@@ -1153,9 +1176,23 @@ export class GuildMusicSession extends EventEmitter {
         }
         let initialBody: import("node:stream/web").ReadableStream<Uint8Array> | null = null;
         try {
+            const clenMatch = /[?&]clen=(\d+)/u.exec(descriptor.url);
+            const urlClen = clenMatch?.[1] ? Number.parseInt(clenMatch[1], 10) : 0;
+            const useChunkedRange =
+                descriptor.url.includes("googlevideo.com") &&
+                Number.isFinite(urlClen) &&
+                urlClen > 0;
+            const rangeChunkSize = 512 * 1024;
+            const initialHeaders: Record<string, string> = {
+                ...(descriptor.headers ?? {}),
+                ...(useChunkedRange
+                    ? { Range: `bytes=0-${Math.min(rangeChunkSize - 1, urlClen - 1)}` }
+                    : {}),
+            };
+
             const initialRes = await this.fetchWithTimeout(
                 descriptor.url,
-                { headers: descriptor.headers },
+                { headers: initialHeaders },
                 signal,
                 8_000,
             );
@@ -1179,10 +1216,18 @@ export class GuildMusicSession extends EventEmitter {
             }
 
             initialBody = initialRes.body as import("node:stream/web").ReadableStream<Uint8Array>;
+            const contentRangeHeader = initialRes.headers.get("content-range");
+            const rangeTotalMatch = contentRangeHeader
+                ? /\/(\d+)$/u.exec(contentRangeHeader)
+                : null;
             const contentLengthHeader = initialRes.headers.get("content-length");
-            const expectedTotalBytes = contentLengthHeader
-                ? Number.parseInt(contentLengthHeader, 10)
-                : Number.NaN;
+            const expectedTotalBytes = rangeTotalMatch?.[1]
+                ? Number.parseInt(rangeTotalMatch[1], 10)
+                : useChunkedRange
+                  ? urlClen
+                  : contentLengthHeader
+                    ? Number.parseInt(contentLengthHeader, 10)
+                    : Number.NaN;
             const canResumeRanges = Number.isFinite(expectedTotalBytes) && expectedTotalBytes > 0;
 
             const out = new PassThrough({ highWaterMark: 256 * 1024 });
@@ -1211,6 +1256,7 @@ export class GuildMusicSession extends EventEmitter {
                 expectedTotalBytes,
                 canResumeRanges,
                 signal,
+                useChunkedRange ? rangeChunkSize : 0,
             );
             initialBody = null;
             return playbackStream;
@@ -1233,6 +1279,7 @@ export class GuildMusicSession extends EventEmitter {
         expectedTotalBytes: number,
         canResumeRanges: boolean,
         signal: AbortSignal,
+        rangeChunkSize = 0,
     ): Promise<void> {
         let activeReader: ReadableStreamDefaultReader<Uint8Array> | null = initialBody.getReader();
         let bytesRead = 0;
@@ -1283,6 +1330,47 @@ export class GuildMusicSession extends EventEmitter {
                     );
                     if (done) {
                         if (canResumeRanges && bytesRead > 0 && bytesRead < expectedTotalBytes) {
+                            if (rangeChunkSize > 0) {
+                                cancelReader();
+                                const nextEnd = Math.min(
+                                    bytesRead + rangeChunkSize - 1,
+                                    expectedTotalBytes - 1,
+                                );
+                                const nextRes = await this.fetchWithTimeout(
+                                    descriptor.url,
+                                    {
+                                        headers: {
+                                            ...descriptor.headers,
+                                            Range: `bytes=${bytesRead}-${nextEnd}`,
+                                        },
+                                    },
+                                    signal,
+                                    8_000,
+                                );
+                                if (
+                                    nextRes.status === 401 ||
+                                    nextRes.status === 403 ||
+                                    nextRes.status === 404 ||
+                                    nextRes.status === 410
+                                ) {
+                                    throw new ExpiredStreamError(
+                                        `Stream URL expired on chunk (HTTP ${nextRes.status})`,
+                                        nextRes.status,
+                                    );
+                                }
+                                if (
+                                    (nextRes.status !== 206 && nextRes.status !== 200) ||
+                                    !nextRes.body
+                                ) {
+                                    throw new Error(
+                                        `Unexpected status ${nextRes.status} on chunked Range fetch`,
+                                    );
+                                }
+                                activeReader = (
+                                    nextRes.body as import("node:stream/web").ReadableStream<Uint8Array>
+                                ).getReader();
+                                continue;
+                            }
                             throw new Error(
                                 `Truncated HTTP stream (${bytesRead}/${expectedTotalBytes} bytes)`,
                             );
@@ -1325,12 +1413,19 @@ export class GuildMusicSession extends EventEmitter {
                         return;
                     }
 
+                    const retryRangeEnd =
+                        rangeChunkSize > 0
+                            ? Math.min(bytesRead + rangeChunkSize - 1, expectedTotalBytes - 1)
+                            : null;
                     const resumeRes = await this.fetchWithTimeout(
                         descriptor.url,
                         {
                             headers: {
                                 ...descriptor.headers,
-                                Range: `bytes=${bytesRead}-`,
+                                Range:
+                                    retryRangeEnd !== null
+                                        ? `bytes=${bytesRead}-${retryRangeEnd}`
+                                        : `bytes=${bytesRead}-`,
                             },
                         },
                         signal,
@@ -1400,7 +1495,9 @@ export class GuildMusicSession extends EventEmitter {
                     let desc = this.activeDescriptorCache.get(canonicalKey);
                     if (!desc || (desc.expiresAt && desc.expiresAt <= Date.now() + 30_000)) {
                         desc = await this.providers.getStreamDescriptor(track, { signal });
-                        this.activeDescriptorCache.set(canonicalKey, desc);
+                        if (canCacheDescriptorUnderTrackKey(track, desc)) {
+                            this.activeDescriptorCache.set(canonicalKey, desc);
+                        }
                         if (
                             track.duration <= 0 &&
                             desc.durationSeconds &&
@@ -1414,7 +1511,8 @@ export class GuildMusicSession extends EventEmitter {
                         hasDiskCache ||
                         desc.isLive ||
                         desc.sourceType !== "url" ||
-                        isHlsStreamDescriptor(desc)
+                        isHlsStreamDescriptor(desc) ||
+                        !canCacheDescriptorUnderTrackKey(track, desc)
                     ) {
                         return;
                     }

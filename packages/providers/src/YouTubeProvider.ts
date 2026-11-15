@@ -83,9 +83,69 @@ function mapEntryToTrack(
 export class YouTubeProvider implements MediaProvider {
     public readonly name = "youtube" as const;
     private readonly entryCache = new ResolvedEntryCache();
+    private readonly inflightPlayerLookups = new Map<string, Promise<YtDlpEntry | null>>();
     private botBlockedUntil = 0;
 
     public constructor(private readonly ytdlp: YtDlpClient) {}
+
+    public isBotBlocked(): boolean {
+        return this.botBlockedUntil > Date.now();
+    }
+
+    private getInnerTubeOptions(): { cookiesPath?: string | null; visitorData?: string | null } {
+        return {
+            cookiesPath: this.ytdlp.getCookiesPath?.() ?? null,
+            visitorData: this.ytdlp.getVisitorData?.() ?? null,
+        };
+    }
+
+    private warmVisitorData(): void {
+        void getOrFetchYouTubeVisitorData(undefined, this.getInnerTubeOptions())
+            .then((vd) => {
+                if (vd && !this.ytdlp.getVisitorData?.()) {
+                    this.ytdlp.setVisitorData?.(vd);
+                }
+            })
+            .catch(() => null);
+    }
+
+    private async resolveFastPlayerEntry(
+        videoId: string,
+        signal?: AbortSignal,
+    ): Promise<YtDlpEntry | null> {
+        const existing = this.inflightPlayerLookups.get(videoId);
+        if (existing) {
+            return existing;
+        }
+        const promise = resolveYouTubeInnerTubePlayer(videoId, signal, this.getInnerTubeOptions())
+            .then((entry) => {
+                if (entry) {
+                    this.entryCache.store(
+                        [
+                            videoId,
+                            `https://www.youtube.com/watch?v=${videoId}`,
+                            `https://music.youtube.com/watch?v=${videoId}`,
+                        ],
+                        entry,
+                    );
+                }
+                return entry;
+            })
+            .finally(() => {
+                this.inflightPlayerLookups.delete(videoId);
+            });
+        this.inflightPlayerLookups.set(videoId, promise);
+        return promise;
+    }
+
+    private warmTrackPlayerEntry(track: Track | undefined): void {
+        if (!track) return;
+        const sourceUrl = track.playableUrl || track.url;
+        const videoId = extractYouTubeVideoId(track.id) ?? extractYouTubeVideoId(sourceUrl);
+        if (!videoId) return;
+        if (this.entryCache.get([sourceUrl, track.url, videoId])) return;
+        void this.resolveFastPlayerEntry(videoId).catch(() => null);
+    }
 
     public supportsUrl(url: string): boolean {
         const c = this.classifyUrl(url);
@@ -106,7 +166,7 @@ export class YouTubeProvider implements MediaProvider {
         mode: SearchProviderMode = "dsp",
     ): Promise<SearchResult> {
         // Warm visitorData token concurrently with search so stream resolution is 1-RTT
-        void getOrFetchYouTubeVisitorData().catch(() => null);
+        this.warmVisitorData();
         const candidatePool = Math.max(limit, 8);
         if (mode === "dsp") {
             try {
@@ -116,9 +176,13 @@ export class YouTubeProvider implements MediaProvider {
                     const bestScore = ranked[0]?.score ?? Number.NEGATIVE_INFINITY;
                     // If YTM top candidate is an accurate match, return immediately without spawning yt-dlp
                     if (bestScore >= 25) {
+                        const topItems = ranked.slice(0, limit).map((r) => r.track);
+                        if (limit <= 5) {
+                            this.warmTrackPlayerEntry(topItems[0]);
+                        }
                         return {
                             type: "selection",
-                            items: ranked.slice(0, limit).map((r) => r.track),
+                            items: topItems,
                         };
                     }
                     // Otherwise merge with direct YouTube search so obscure/unlisted originals aren't missed
@@ -127,11 +191,15 @@ export class YouTubeProvider implements MediaProvider {
                     );
                     const seenIds = new Set(items.map((t) => t.id));
                     const combined = [...items, ...directItems.filter((t) => !seenIds.has(t.id))];
+                    const mergedItems = rankTrackCandidates(combined, { query })
+                        .slice(0, limit)
+                        .map((r) => r.track);
+                    if (limit <= 5) {
+                        this.warmTrackPlayerEntry(mergedItems[0]);
+                    }
                     return {
                         type: "selection",
-                        items: rankTrackCandidates(combined, { query })
-                            .slice(0, limit)
-                            .map((r) => r.track),
+                        items: mergedItems,
                     };
                 }
             } catch {
@@ -140,11 +208,15 @@ export class YouTubeProvider implements MediaProvider {
         }
 
         const items = await this.searchDirectYouTube(query, candidatePool);
+        const directRanked = rankTrackCandidates(items, { query })
+            .slice(0, limit)
+            .map((r) => r.track);
+        if (limit <= 5) {
+            this.warmTrackPlayerEntry(directRanked[0]);
+        }
         return {
             type: "selection",
-            items: rankTrackCandidates(items, { query })
-                .slice(0, limit)
-                .map((r) => r.track),
+            items: directRanked,
         };
     }
 
@@ -169,7 +241,7 @@ export class YouTubeProvider implements MediaProvider {
         if (!isCollection) {
             const singleVideoId = extractYouTubeVideoId(url);
             if (singleVideoId) {
-                const fastDump = await resolveYouTubeInnerTubePlayer(singleVideoId);
+                const fastDump = await this.resolveFastPlayerEntry(singleVideoId);
                 if (fastDump) {
                     const fastSingle = mapEntryToTrack(
                         fastDump,
@@ -238,7 +310,7 @@ export class YouTubeProvider implements MediaProvider {
         const sourceUrl = track.playableUrl || track.url;
         const videoId = extractYouTubeVideoId(track.id) ?? extractYouTubeVideoId(sourceUrl);
         const dump =
-            (videoId ? await resolveYouTubeInnerTubePlayer(videoId) : null) ??
+            (videoId ? await this.resolveFastPlayerEntry(videoId) : null) ??
             (await this.ytdlp.dumpJson(sourceUrl, { noPlaylist: true }));
         this.entryCache.store([sourceUrl, track.url, track.id], dump);
         const hydrated = mapEntryToTrack(
@@ -285,7 +357,7 @@ export class YouTubeProvider implements MediaProvider {
         // Fast Path: ~200ms direct mobile InnerTube player resolution (zero yt-dlp process spawn)
         const videoId = extractYouTubeVideoId(track.id) ?? extractYouTubeVideoId(target);
         if (!fmt?.url && videoId && !signal?.aborted) {
-            const innerTubeEntry = await resolveYouTubeInnerTubePlayer(videoId, signal);
+            const innerTubeEntry = await this.resolveFastPlayerEntry(videoId, signal);
             if (innerTubeEntry) {
                 const innerTubeFmt = await selectPlayableFormatFromEntry(innerTubeEntry, signal);
                 if (innerTubeFmt?.url) {

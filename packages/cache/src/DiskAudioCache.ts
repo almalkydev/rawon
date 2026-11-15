@@ -17,6 +17,7 @@ export interface CachedAudioMetadata {
     byteSize: number;
     createdAt: number;
     lastAccessedAt: number;
+    schemaVersion?: number;
 }
 
 export interface DiskAudioCacheOptions {
@@ -44,6 +45,7 @@ interface InFlightWrite {
 }
 
 const VALID_CONTAINERS = new Set(["webm", "ogg", "opus", "m4a", "mp4", "mp3", "flac", "wav"]);
+const CACHE_SCHEMA_VERSION = 2;
 
 export function hashCanonicalAudioKey(canonicalKey: string): string {
     return createHash("sha256").update(canonicalKey).digest("hex").slice(0, 32);
@@ -100,7 +102,17 @@ export class DiskAudioCache {
                 const meta = JSON.parse(raw) as CachedAudioMetadata;
                 const dataPath = join(this.cacheDir, meta.fileName);
                 const info = await stat(dataPath);
-                if (info.isFile() && info.size >= this.minValidBytes) {
+                const isValidSchema = meta.schemaVersion === CACHE_SCHEMA_VERSION;
+                const isPoisonedYouTubeMp3 =
+                    (meta.canonicalKey.startsWith("youtube:") ||
+                        meta.canonicalKey.startsWith("youtubemusic:")) &&
+                    meta.container === "mp3";
+                if (
+                    info.isFile() &&
+                    info.size >= this.minValidBytes &&
+                    isValidSchema &&
+                    !isPoisonedYouTubeMp3
+                ) {
                     meta.byteSize = info.size;
                     this.entries.set(meta.hash, meta);
                 } else {
@@ -359,6 +371,7 @@ export class DiskAudioCache {
                             byteSize: info.size,
                             createdAt: Date.now(),
                             lastAccessedAt: Date.now(),
+                            schemaVersion: CACHE_SCHEMA_VERSION,
                         };
                         this.entries.set(hash, saved);
                         await this.writeMetaSidecar(saved);
@@ -428,6 +441,7 @@ export class DiskAudioCache {
             byteSize: data.length,
             createdAt: Date.now(),
             lastAccessedAt: Date.now(),
+            schemaVersion: CACHE_SCHEMA_VERSION,
         };
         this.entries.set(hash, saved);
         await this.writeMetaSidecar(saved);

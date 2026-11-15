@@ -15,10 +15,12 @@ import { classifyQuery } from "./QueryClassifier.js";
 import { SoundCloudProvider } from "./SoundCloudProvider.js";
 import { SpotifyProvider } from "./SpotifyProvider.js";
 import {
+    hasUnrequestedVariant,
     parseArtistTitleFromQuery,
     rankTrackCandidates,
     selectBestMatchingTrack,
     splitArtistNames,
+    type TrackMatchContext,
 } from "./trackMatcher.js";
 import { YouTubeProvider } from "./YouTubeProvider.js";
 import type { YtDlpClient } from "./YtDlpClient.js";
@@ -102,20 +104,17 @@ export class ProviderRegistry {
                 if (!res || res.items.length === 0) {
                     return null;
                 }
-                return (
-                    selectBestMatchingTrack(
-                        res.items,
-                        {
-                            query,
-                            targetTitle: target?.title,
-                            targetArtists: target?.artists,
-                            targetDurationSeconds: target?.durationSeconds,
-                        },
-                        -25,
-                    ) ??
-                    res.items[0] ??
-                    null
+                const matchContext: TrackMatchContext = {
+                    query,
+                    targetTitle: target?.title,
+                    targetArtists: target?.artists,
+                    targetDurationSeconds: target?.durationSeconds,
+                };
+                const nonVariantItems = res.items.filter(
+                    (item) => !hasUnrequestedVariant(item, matchContext),
                 );
+                const pool = nonVariantItems.length > 0 ? nonVariantItems : res.items;
+                return selectBestMatchingTrack(pool, matchContext, -25) ?? pool[0] ?? null;
             },
         });
         this.lyrics = new LyricsService(
@@ -141,7 +140,7 @@ export class ProviderRegistry {
             return this.resolveUrl(trimmed);
         }
 
-        const cacheKey = `search:${source}:${mode}:${limit}:${trimmed.toLowerCase()}`;
+        const cacheKey = `search:v2:${source}:${mode}:${limit}:${trimmed.toLowerCase()}`;
         const cached = await this.metadataCache?.getJson<SearchResult>(cacheKey);
         if (cached) {
             return cached;
@@ -175,7 +174,7 @@ export class ProviderRegistry {
         const safeUrl = (await assertSafePublicUrl(rawUrl)).toString();
         const classified = classifyQuery(safeUrl);
 
-        const cacheKey = `resolve:${classified.sourceType}:${safeUrl}`;
+        const cacheKey = `resolve:v2:${classified.sourceType}:${safeUrl}`;
         const cached = await this.metadataCache?.getJson<SearchResult>(cacheKey);
         if (cached) {
             return cached;
@@ -213,7 +212,7 @@ export class ProviderRegistry {
     }
 
     public async hydrateTrack(track: Track): Promise<Track> {
-        const key = `hydrate:${track.provider}:${track.id || track.url}`;
+        const key = `hydrate:v2:${track.provider}:${track.id || track.url}`;
         const cached = await this.metadataCache?.getJson<Track>(key);
         if (cached && cached.duration > 0 && cached.thumbnail) {
             return cached;
@@ -313,7 +312,58 @@ export class ProviderRegistry {
             "Primary stream resolution failed; trying fallback provider",
         );
 
-        const seenUrls = new Set<string>();
+        const seenUrls = new Set<string>([
+            track.url,
+            ...(track.playableUrl ? [track.playableUrl] : []),
+        ]);
+        const seenIds = new Set<string>(track.id ? [track.id] : []);
+
+        // 1. For YouTube/Spotify tracks where a single video ID failed (e.g. region-blocked Topic upload)
+        // and YouTube is not globally bot-blocked, try alternate official YouTube video IDs of the same song first
+        const wasBotBlocked =
+            (primaryErr instanceof ProviderError && primaryErr.category === "bot_detection") ||
+            this.youtube.isBotBlocked();
+
+        if (track.provider !== "soundcloud" && !wasBotBlocked && queries[0] && !signal?.aborted) {
+            const primaryQuery = queries[0];
+            const ytAltSearch = await this.youtube.search(primaryQuery, 8, "dsp").catch(() => null);
+            if (ytAltSearch && ytAltSearch.items.length > 0) {
+                const matchContext: TrackMatchContext = {
+                    query: primaryQuery,
+                    targetTitle,
+                    targetArtists,
+                    targetDurationSeconds: track.duration > 0 ? track.duration : undefined,
+                };
+                const ytAltCandidates = rankTrackCandidates(ytAltSearch.items, matchContext)
+                    .filter((entry) => {
+                        if (entry.score < 60) return false;
+                        if (hasUnrequestedVariant(entry.track, matchContext)) return false;
+                        if (
+                            track.duration >= 60 &&
+                            entry.track.duration > 0 &&
+                            Math.abs(entry.track.duration - track.duration) > 15
+                        ) {
+                            return false;
+                        }
+                        return true;
+                    })
+                    .map((entry) => entry.track);
+
+                for (const candidate of ytAltCandidates.slice(0, 2)) {
+                    if (signal?.aborted) break;
+                    if (seenIds.has(candidate.id) || seenUrls.has(candidate.url)) continue;
+                    seenIds.add(candidate.id);
+                    seenUrls.add(candidate.url);
+                    try {
+                        return await this.youtube.getStreamDescriptor(candidate, signal);
+                    } catch {
+                        // Continue to next alternate candidate
+                    }
+                }
+            }
+        }
+
+        // 2. Alternate provider fallback with strict knock-off, variant, artist, and duration validation
         for (const fallbackQuery of queries) {
             if (signal?.aborted) break;
             const altSearch = await this.search(fallbackQuery, targetAlt, 8, "direct").catch(
@@ -329,22 +379,25 @@ export class ProviderRegistry {
                     ? altSearch.items.filter((item) => item.duration === 0 || item.duration > 35)
                     : altSearch.items;
 
-            const rankedCandidates = rankTrackCandidates(nonPreviewItems, {
+            const matchContext: TrackMatchContext = {
                 query: fallbackQuery,
                 targetTitle,
                 targetArtists,
                 targetDurationSeconds: track.duration > 0 ? track.duration : undefined,
-            });
+            };
 
-            // Reject knock-offs, unrequested remixes/covers/slowed versions, duration mismatches, and unrelated tracks
+            const rankedCandidates = rankTrackCandidates(nonPreviewItems, matchContext);
+
+            // Reject knock-offs, unrequested remixes/flips/edits/versions/covers, duration mismatches, and unrelated tracks
             const orderedCandidates = rankedCandidates
                 .filter((entry) => {
-                    if (entry.score < 10) return false;
+                    if (entry.score < 50) return false;
+                    if (hasUnrequestedVariant(entry.track, matchContext)) return false;
                     if (
                         targetAlt === "soundcloud" &&
                         track.duration >= 60 &&
                         entry.track.duration > 0 &&
-                        Math.abs(entry.track.duration - track.duration) > 15
+                        Math.abs(entry.track.duration - track.duration) > 12
                     ) {
                         return false;
                     }

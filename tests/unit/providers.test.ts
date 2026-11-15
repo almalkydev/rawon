@@ -1,7 +1,9 @@
 import {
     classifyQuery,
     extractBestAudioFormat,
+    extractVisitorDataFromSwJsData,
     extractYouTubeVideoId,
+    hasUnrequestedVariant,
     isHlsFormat,
     LyricsService,
     listAudioFormatCandidates,
@@ -1062,5 +1064,70 @@ describe("Provider Query Classification, Spotify Resolution & Lyrics", () => {
         expect(descriptor.codec).toBe("opus");
         expect(descriptor.container).toBe("webm");
         expect(descriptor.url).toContain("itag=251");
+    });
+
+    it("extracts visitorData across all base64 padding lengths and rejects SoundCloud knock-off flips/versions/edits", () => {
+        // 1. sw.js_data visitorData extraction with 0, 1 (%3D), and 2 (%3D%3D) padding bytes
+        const swPayloadSinglePad = `)]}'\n[[["www.youtube.com/sw.js",null],["i"],["131.0.0.0",0,[[0,0,0,0,"",0,"","","https://www.youtube.com",0,0,"","US","CgsxMjM0NTY3ODkwYSDGpOjXBjIKCgJERRIEGgAgWw%3D","",82,"Mozilla/5.0","COSR6NcGEIaR6NcGGM6V6NcGGPCV6NcGGKGW6NcG%3D%3D"]]]]]`;
+        expect(extractVisitorDataFromSwJsData(swPayloadSinglePad)).toBe(
+            "CgsxMjM0NTY3ODkwYSDGpOjXBjIKCgJERRIEGgAgWw%3D",
+        );
+
+        const swPayloadNoPad = `)]}'\n[[["www.youtube.com/sw.js",null],["i"],["131.0.0.0",0,[[0,0,0,0,"",0,"","","https://www.youtube.com",0,0,"","US","CgtFiUVmR2hJaktsTW5PcFFyU3RVdlh5Wg","",82,"Mozilla/5.0","COSR6NcGEIaR6NcGGM6V6NcGGPCV6NcGGKGW6NcG%3D%3D"]]]]]`;
+        expect(extractVisitorDataFromSwJsData(swPayloadNoPad)).toBe(
+            "CgtFiUVmR2hJaktsTW5PcFFyU3RVdlh5Wg",
+        );
+
+        // 2. Rejects SoundCloud knock-off flips/versions/edits even when URL slug contains target artist
+        const matchContext = {
+            query: "Drake & Don Toliver - Solar Eclipse",
+            targetTitle: "Solar Eclipse",
+            targetAuthor: "Drake & Don Toliver",
+            targetDurationSeconds: 219,
+        };
+        const scKnockoffs = [
+            {
+                id: "sc1",
+                title: "Drake & Don Toliver - Solar Eclipse v2 [MadeByMatty Version]",
+                url: "https://soundcloud.com/madebymattyofficial/drake-choosin-texas-v2-ft-don",
+                duration: 239,
+                thumbnail: "",
+                author: "itsMadeByMatty",
+                provider: "soundcloud" as const,
+            },
+            {
+                id: "sc2",
+                title: "Solar Eclipse (Drake & Don Toliver - Choosin' Texas) [MOJë Flip]",
+                url: "https://soundcloud.com/itsmoje/solar-eclipse",
+                duration: 211,
+                thumbnail: "",
+                author: "MOJë",
+                provider: "soundcloud" as const,
+            },
+            {
+                id: "sc3",
+                title: "solar eclipse (ftp afro house edit)",
+                url: "https://soundcloud.com/fromtheprojects/solar-eclipse-ftp-afro-house",
+                duration: 232,
+                thumbnail: "",
+                author: "FTP",
+                provider: "soundcloud" as const,
+            },
+            {
+                id: "sc4",
+                title: "Drake, Don Toliver - Solar Eclipse ( Mwon Version )",
+                url: "https://soundcloud.com/mwonmusic/drake-don-toliver-solar",
+                duration: 253,
+                thumbnail: "",
+                author: "MWON",
+                provider: "soundcloud" as const,
+            },
+        ];
+
+        const ranked = rankTrackCandidates(scKnockoffs, matchContext);
+        for (const entry of ranked) {
+            expect(hasUnrequestedVariant(entry.track, matchContext)).toBe(true);
+            expect(entry.score).toBeLessThan(0);
+        }
     });
 });

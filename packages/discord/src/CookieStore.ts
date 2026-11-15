@@ -35,20 +35,30 @@ export class CookieStore {
         cookieHash: string;
         count: number;
     } {
+        const defaultExpiry = Math.floor(Date.now() / 1000) + 86400 * 365;
         const lines = [
             "# Netscape HTTP Cookie File",
             "# Exported by Rawon V2 CookieStore",
             ...entries.map((c) => {
-                const domainField =
-                    c.httpOnly && !c.domain.startsWith("#HttpOnly_")
-                        ? `#HttpOnly_${c.domain}`
-                        : c.domain;
+                const rawDomain = c.domain.replace(/^#HttpOnly_/u, "").trim();
+                const isYouTubeOrGoogleRoot =
+                    rawDomain === "youtube.com" || rawDomain === "google.com";
+                const normalizedDomain =
+                    rawDomain.startsWith(".") || (!c.includeSubdomains && !isYouTubeOrGoogleRoot)
+                        ? rawDomain
+                        : `.${rawDomain}`;
+                const includeSubdomains = normalizedDomain.startsWith(".");
+                const domainField = c.httpOnly ? `#HttpOnly_${normalizedDomain}` : normalizedDomain;
+                const expiration =
+                    Number.isFinite(c.expiration) && c.expiration > 0
+                        ? Math.floor(c.expiration)
+                        : defaultExpiry;
                 return [
                     domainField,
-                    c.includeSubdomains ? "TRUE" : "FALSE",
+                    includeSubdomains ? "TRUE" : "FALSE",
                     c.path || "/",
                     c.secure ? "TRUE" : "FALSE",
-                    Math.floor(c.expiration || 0),
+                    expiration,
                     c.name,
                     c.value,
                 ].join("\t");

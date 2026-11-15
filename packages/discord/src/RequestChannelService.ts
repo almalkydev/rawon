@@ -376,12 +376,27 @@ export class RequestChannelService {
         t: ScopedTranslator;
     }): void {
         const key = `${params.guildId}:${params.botId}`;
-        this.updater.schedule(key, 350, async () => {
-            await this.syncPlayerMessage(params);
+        const session = this.sessions.getSession(params.guildId, params.botId);
+        const delayMs = session?.status === "buffering" ? 900 : 40;
+        this.updater.schedule(key, delayMs, async () => {
+            await this.syncPlayerMessageInternal(params);
         });
     }
 
     public async syncPlayerMessage(params: {
+        client: Client;
+        guildId: string;
+        botId: string;
+        botSettings: BotSettings;
+        t: ScopedTranslator;
+    }): Promise<void> {
+        const key = `${params.guildId}:${params.botId}`;
+        await this.updater.runExclusive(key, async () => {
+            await this.syncPlayerMessageInternal(params);
+        });
+    }
+
+    private async syncPlayerMessageInternal(params: {
         client: Client;
         guildId: string;
         botId: string;

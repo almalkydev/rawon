@@ -3,7 +3,7 @@ import type { DiskAudioCache, PrefetchCoordinator } from "@rawon/cache";
 import type { I18nService, RawonConfig } from "@rawon/config";
 import type { BotHeartbeatInfo, CoordinatorService, DatabaseStore } from "@rawon/database";
 import type { SessionManager } from "@rawon/music-core";
-import type { ProviderRegistry } from "@rawon/providers";
+import { getOrFetchYouTubeVisitorData, type ProviderRegistry } from "@rawon/providers";
 import { type Logger, redactSensitiveText } from "@rawon/shared";
 import {
     ActivityType,
@@ -118,6 +118,16 @@ export class MultiBotSupervisor {
                 );
             }
         }
+
+        void getOrFetchYouTubeVisitorData(undefined, {
+            cookiesPath: this.providers.ytdlp.getCookiesPath(),
+        })
+            .then((visitorData) => {
+                if (visitorData) {
+                    this.providers.ytdlp.setVisitorData(visitorData);
+                }
+            })
+            .catch(() => undefined);
 
         this.requestChannels = new RequestChannelService({
             store: this.store,

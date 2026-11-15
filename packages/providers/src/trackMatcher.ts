@@ -22,11 +22,11 @@ const NOISE_TAG_REGEX =
 const FEAT_CLAUSE_REGEX = /\b(?:feat\.?|ft\.?|featuring)\s+[^([\])-]+/giu;
 
 const VARIANT_PATTERNS = {
-    remix: /\b(?:remix|re-mix|rmx|bootleg|flip|vip\s*mix|club\s*mix|extended\s*mix|dj\s*mix|mashup|mash-up|megamix|blend|rework)\b/iu,
-    edit: /\b(?:tiktok\s*edit|fan\s*edit|amv\s*edit|sped\s*edit|slowed\s*edit|nightcore\s*edit)\b/iu,
+    remix: /\b(?:remix|re-mix|rmx|bootleg|flip|vip(?:\s*mix)?|club\s*mix|extended(?:\s*mix)?|dj\s*mix|afro\s*house|house\s*mix|techno\s*mix|dnb\s*mix|drum\s*(?:and|&)\s*bass|mashup|mash-up|megamix|blend|rework|refix|redrum)\b/iu,
+    edit: /\b(?!radio\s+edit\b)(?:edit|edits|v[2-9]|version)\b/iu,
     speedPitch:
         /\b(?:slowed|reverb|sped\s*up|speed\s*up|nightcore|daycore|8d|8d\s*audio|16d|bass\s*boost(?:ed)?|chopped\s*(?:and|&|n)\s*screwed|pitched|chipmunk)\b/iu,
-    cover: /\b(?:cover|covered\s+by|tribute|in\s+the\s+style\s+of|made\s+famous\s+by|karaoke|instrumental|backing\s+track|type\s+beat|reprod|ai\s+cover|ai\s+version|parody|lullaby\s+version|8-bit\s+version|piano\s+version|guitar\s+version)\b/iu,
+    cover: /\b(?:cover|covered\s+by|tribute|in\s+the\s+style\s+of|made\s+famous\s+by|karaoke|party\s*tyme|vocal\s*version|\(\s*vocal\s*\)|demo\s*version|fan\s*made|remake|re-recorded|instrumental|backing\s+track|type\s+beat|reprod|ai\s+cover|ai\s+version|parody|lullaby\s+version|8-bit\s+version|piano\s+version|guitar\s+version)\b/iu,
     live: /\b(?:live(?:\s+at|\s+from|\s+in|\s+version|\s+performance|\s+session|\s+lounge)?|concert|fancam|unplugged|tiny\s+desk)\b/iu,
     acoustic: /\b(?:acoustic|stripped|unplugged)\b/iu,
     nonSong:
@@ -37,7 +37,7 @@ const CALENDAR_DATE_AUTHOR_REGEX =
     /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}(?:,\s*\d{4})?$/iu;
 
 const KNOCKOFF_AUTHOR_REGEX =
-    /\b(?:tribute|karaoke|8-bit|lullaby|made\s+famous|in\s+the\s+style|backing\s+tracks?|type\s+beat|instrumentals?|kidz\s+bop|cover\s+band|ai\s+music)\b/iu;
+    /\b(?:tribute|karaoke|party\s*tyme|8-bit|lullaby|made\s+famous|in\s+the\s+style|backing\s+tracks?|type\s+beat|instrumentals?|kidz\s+bop|cover\s+band|ai\s+music)\b/iu;
 
 const STOP_WORDS = new Set([
     "official",
@@ -130,9 +130,89 @@ export function parseArtistTitleFromQuery(query: string): {
     return { titleHint: cleaned };
 }
 
+function extractUploaderHandleFromUrl(url: string): string {
+    if (!url) return "";
+    try {
+        const parsed = new URL(url);
+        const host = parsed.hostname.toLowerCase();
+        if (host.includes("soundcloud.com")) {
+            const firstSeg = parsed.pathname.split("/").filter(Boolean)[0] ?? "";
+            return firstSeg.replace(/[-_]+/gu, " ");
+        }
+        return "";
+    } catch {
+        return "";
+    }
+}
+
+export function hasUnrequestedVariant(track: Track, context: TrackMatchContext): boolean {
+    const referenceText = stripTitleNoise(
+        `${context.query} ${context.targetTitle ?? ""} ${(context.targetArtists ?? []).join(" ")}`,
+    );
+    const candidateFullText = stripTitleNoise(`${track.title} ${track.author ?? ""}`);
+    const candidateTitleText = stripTitleNoise(track.title);
+
+    if (
+        VARIANT_PATTERNS.remix.test(candidateFullText) &&
+        !VARIANT_PATTERNS.remix.test(referenceText)
+    ) {
+        return true;
+    }
+    if (
+        VARIANT_PATTERNS.edit.test(candidateTitleText) &&
+        !VARIANT_PATTERNS.edit.test(referenceText)
+    ) {
+        return true;
+    }
+    if (
+        VARIANT_PATTERNS.speedPitch.test(candidateFullText) &&
+        !VARIANT_PATTERNS.speedPitch.test(referenceText)
+    ) {
+        return true;
+    }
+    if (
+        VARIANT_PATTERNS.cover.test(candidateFullText) &&
+        !VARIANT_PATTERNS.cover.test(referenceText)
+    ) {
+        return true;
+    }
+    if (
+        VARIANT_PATTERNS.live.test(candidateFullText) &&
+        !VARIANT_PATTERNS.live.test(referenceText)
+    ) {
+        return true;
+    }
+    if (
+        VARIANT_PATTERNS.acoustic.test(candidateFullText) &&
+        !VARIANT_PATTERNS.acoustic.test(referenceText)
+    ) {
+        return true;
+    }
+    if (
+        VARIANT_PATTERNS.nonSong.test(candidateFullText) &&
+        !VARIANT_PATTERNS.nonSong.test(referenceText)
+    ) {
+        return true;
+    }
+    if (
+        track.author &&
+        KNOCKOFF_AUTHOR_REGEX.test(track.author) &&
+        !KNOCKOFF_AUTHOR_REGEX.test(referenceText)
+    ) {
+        return true;
+    }
+    if (track.author && CALENDAR_DATE_AUTHOR_REGEX.test(track.author.trim())) {
+        return true;
+    }
+    return false;
+}
+
 export function scoreTrackCandidate(track: Track, context: TrackMatchContext): number {
-    const referenceText = `${context.query} ${context.targetTitle ?? ""} ${(context.targetArtists ?? []).join(" ")}`;
-    const candidateFullText = `${track.title} ${track.author ?? ""}`;
+    const referenceText = stripTitleNoise(
+        `${context.query} ${context.targetTitle ?? ""} ${(context.targetArtists ?? []).join(" ")}`,
+    );
+    const candidateFullText = stripTitleNoise(`${track.title} ${track.author ?? ""}`);
+    const candidateTitleText = stripTitleNoise(track.title);
 
     let score = 0;
 
@@ -141,43 +221,43 @@ export function scoreTrackCandidate(track: Track, context: TrackMatchContext): n
         VARIANT_PATTERNS.remix.test(candidateFullText) &&
         !VARIANT_PATTERNS.remix.test(referenceText)
     ) {
-        score -= 95;
+        score -= 200;
     }
     if (
-        VARIANT_PATTERNS.edit.test(candidateFullText) &&
+        VARIANT_PATTERNS.edit.test(candidateTitleText) &&
         !VARIANT_PATTERNS.edit.test(referenceText)
     ) {
-        score -= 90;
+        score -= 190;
     }
     if (
         VARIANT_PATTERNS.speedPitch.test(candidateFullText) &&
         !VARIANT_PATTERNS.speedPitch.test(referenceText)
     ) {
-        score -= 110;
+        score -= 210;
     }
     if (
         VARIANT_PATTERNS.cover.test(candidateFullText) &&
         !VARIANT_PATTERNS.cover.test(referenceText)
     ) {
-        score -= 115;
+        score -= 215;
     }
     if (
         VARIANT_PATTERNS.live.test(candidateFullText) &&
         !VARIANT_PATTERNS.live.test(referenceText)
     ) {
-        score -= 75;
+        score -= 120;
     }
     if (
         VARIANT_PATTERNS.acoustic.test(candidateFullText) &&
         !VARIANT_PATTERNS.acoustic.test(referenceText)
     ) {
-        score -= 65;
+        score -= 100;
     }
     if (
         VARIANT_PATTERNS.nonSong.test(candidateFullText) &&
         !VARIANT_PATTERNS.nonSong.test(referenceText)
     ) {
-        score -= 120;
+        score -= 220;
     }
 
     if (
@@ -185,10 +265,10 @@ export function scoreTrackCandidate(track: Track, context: TrackMatchContext): n
         KNOCKOFF_AUTHOR_REGEX.test(track.author) &&
         !KNOCKOFF_AUTHOR_REGEX.test(referenceText)
     ) {
-        score -= 100;
+        score -= 180;
     }
     if (track.author && CALENDAR_DATE_AUTHOR_REGEX.test(track.author.trim())) {
-        score -= 120;
+        score -= 180;
     }
 
     // 2. Determine target title and target artists
@@ -274,7 +354,7 @@ export function scoreTrackCandidate(track: Track, context: TrackMatchContext): n
         (tok) => !targetAndArtistTokenSet.has(tok),
     );
     if (extraCandidateTitleTokens.length > 0) {
-        score -= Math.min(35, extraCandidateTitleTokens.length * 7);
+        score -= Math.min(45, extraCandidateTitleTokens.length * 9);
     }
 
     // 4. Overall query token coverage (crucial when query is free-form "Artist Song" without a dash)
@@ -294,9 +374,10 @@ export function scoreTrackCandidate(track: Track, context: TrackMatchContext): n
     }
 
     // 5. Artist accuracy matching (distinguish verified uploader/author from title-only mention)
+    const uploaderUrlHandle = extractUploaderHandleFromUrl(track.url);
     const verifiedAuthorAndUrlTokens = new Set([
         ...authorTokensList,
-        ...tokenizeMatchText(track.url),
+        ...tokenizeMatchText(uploaderUrlHandle),
     ]);
 
     if (effectiveArtists.length > 0) {
@@ -329,7 +410,7 @@ export function scoreTrackCandidate(track: Track, context: TrackMatchContext): n
             score += 12;
         } else {
             // Known target artist is completely absent from candidate author/title/url
-            score -= 65;
+            score -= 160;
         }
     }
 

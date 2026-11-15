@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import type { DatabaseStore } from "@rawon/database";
-import type { YtDlpClient } from "@rawon/providers";
+import { getOrFetchYouTubeVisitorData, type YtDlpClient } from "@rawon/providers";
 import type { AuthSessionRecord, Logger } from "@rawon/shared";
 import puppeteer, { type Browser } from "puppeteer-core";
 import {
@@ -129,10 +129,18 @@ export class GoogleLoginService {
 
         const saved = this.cookieStore.saveCookies(entries);
         this.ytdlp.setCookiesPath(saved.cookiesPath);
+        const visitorData = await getOrFetchYouTubeVisitorData(undefined, {
+            cookiesPath: saved.cookiesPath,
+            forceRefreshVisitorData: true,
+        }).catch(() => null);
+        if (visitorData) {
+            this.ytdlp.setVisitorData(visitorData);
+        }
 
         return this.store.saveAuthSession({
             id: 1,
             status: "logged_in",
+            visitorData,
             cookieHash: saved.cookieHash,
             lastRefresh: Date.now(),
             error: null,

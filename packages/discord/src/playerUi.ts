@@ -408,22 +408,72 @@ export function buildFilterSelectPayload(params: {
  */
 export class PlayerMessageUpdater {
     private readonly timers = new Map<string, NodeJS.Timeout>();
+    private readonly timerDeadlines = new Map<string, number>();
     private readonly lastHash = new Map<string, string>();
     private readonly pendingFns = new Map<string, () => Promise<void>>();
+    private readonly inFlight = new Map<string, Promise<void>>();
 
     public schedule(key: string, delayMs: number, fn: () => Promise<void>): void {
         this.pendingFns.set(key, fn);
-        if (this.timers.has(key)) return;
-        const timer = setTimeout(() => {
-            this.timers.delete(key);
-            const run = this.pendingFns.get(key);
-            this.pendingFns.delete(key);
-            if (run) {
-                void run().catch(() => undefined);
+        const now = Date.now();
+        const targetDeadline = now + Math.max(0, delayMs);
+        const existingTimer = this.timers.get(key);
+        const existingDeadline = this.timerDeadlines.get(key);
+
+        if (existingTimer && existingDeadline !== undefined) {
+            if (existingDeadline <= targetDeadline + 15) {
+                return;
             }
-        }, delayMs);
+            clearTimeout(existingTimer);
+            this.timers.delete(key);
+            this.timerDeadlines.delete(key);
+        }
+
+        const timer = setTimeout(
+            () => {
+                this.timers.delete(key);
+                this.timerDeadlines.delete(key);
+                this.drainPending(key);
+            },
+            Math.max(0, delayMs),
+        );
         timer.unref?.();
         this.timers.set(key, timer);
+        this.timerDeadlines.set(key, targetDeadline);
+    }
+
+    public async runExclusive(key: string, fn: () => Promise<void>): Promise<void> {
+        const existingTimer = this.timers.get(key);
+        if (existingTimer) {
+            clearTimeout(existingTimer);
+            this.timers.delete(key);
+            this.timerDeadlines.delete(key);
+        }
+        this.pendingFns.set(key, fn);
+        await this.drainPending(key);
+    }
+
+    private drainPending(key: string): Promise<void> {
+        const active = this.inFlight.get(key);
+        if (active) {
+            return active;
+        }
+        const loop = (async () => {
+            while (this.pendingFns.has(key)) {
+                const nextFn = this.pendingFns.get(key);
+                this.pendingFns.delete(key);
+                if (nextFn) {
+                    await nextFn().catch(() => undefined);
+                }
+            }
+        })().finally(() => {
+            this.inFlight.delete(key);
+            if (this.pendingFns.has(key) && !this.timers.has(key)) {
+                void this.drainPending(key);
+            }
+        });
+        this.inFlight.set(key, loop);
+        return loop;
     }
 
     public async editMessageIfChanged(
@@ -460,6 +510,7 @@ export class PlayerMessageUpdater {
             clearTimeout(t);
             this.timers.delete(key);
         }
+        this.timerDeadlines.delete(key);
         this.pendingFns.delete(key);
     }
 }
