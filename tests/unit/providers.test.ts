@@ -962,4 +962,105 @@ describe("Provider Query Classification, Spotify Resolution & Lyrics", () => {
         expect(desc2.canonicalKey).toBe("soundcloud:sc_original");
         expect(ytDumpCount).toBe(firstTrackYtCalls);
     });
+
+    it("resolves YouTube stream via direct mobile InnerTube player in one pass without spawning yt-dlp and ranks free-form queries accurately", async () => {
+        // 1. Free-form query ("Solar Eclipse Drake Don Toliver") ranks studio track above podcast review episode
+        const freeFormCandidates = [
+            {
+                id: "3wKKVIGoHWc",
+                title: "Drake, Don Toliver – “Solar Eclipse” (LET’S TALK ABOUT IT: MUSIX REVIEWS)",
+                url: "https://music.youtube.com/watch?v=3wKKVIGoHWc",
+                duration: 0,
+                thumbnail: "",
+                author: "Oct 2",
+                provider: "youtubemusic" as const,
+            },
+            {
+                id: "eJFi2TK5174",
+                title: "Solar Eclipse",
+                url: "https://music.youtube.com/watch?v=eJFi2TK5174",
+                duration: 219,
+                thumbnail: "",
+                author: "Drake & Don Toliver",
+                provider: "youtubemusic" as const,
+            },
+        ];
+
+        const bestFreeForm = selectBestMatchingTrack(freeFormCandidates, {
+            query: "Solar Eclipse Drake Don Toliver",
+        });
+        expect(bestFreeForm?.id).toBe("eJFi2TK5174");
+
+        // 2. Direct mobile InnerTube player resolves itag=251 WebM/Opus with 0 yt-dlp calls
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: string | URL) => {
+                const url = String(input);
+                if (url.includes("sw.js_data")) {
+                    return new Response(
+                        ')]}\'\n["Cgt2aXNpdG9yRGF0YV90b2tlbl9leGFtcGxlX2FiY2RlZg%3D%3D"]',
+                        {
+                            status: 200,
+                        },
+                    );
+                }
+                if (url.includes("youtubei/v1/player")) {
+                    return new Response(
+                        JSON.stringify({
+                            playabilityStatus: { status: "OK" },
+                            videoDetails: {
+                                videoId: "eJFi2TK5174",
+                                title: "Solar Eclipse",
+                                author: "Drake - Topic",
+                                lengthSeconds: "219",
+                            },
+                            streamingData: {
+                                adaptiveFormats: [
+                                    {
+                                        itag: 251,
+                                        url: "https://rr1---sn.googlevideo.com/videoplayback?itag=251&id=eJFi2TK5174",
+                                        mimeType: 'audio/webm; codecs="opus"',
+                                        bitrate: 135000,
+                                        averageBitrate: 132000,
+                                        audioSampleRate: "48000",
+                                        audioChannels: 2,
+                                    },
+                                ],
+                            },
+                        }),
+                        { status: 200 },
+                    );
+                }
+                return new Response(new Uint8Array([1, 2, 3]), { status: 206 });
+            }),
+        );
+
+        let dumpCalls = 0;
+        const ytdlpStub = {
+            dumpJson: vi.fn(async () => {
+                dumpCalls += 1;
+                throw new Error(
+                    "yt-dlp should not be spawned when InnerTube mobile player succeeds",
+                );
+            }),
+        } as unknown as YtDlpClient;
+
+        const yt = new YouTubeProvider(ytdlpStub);
+        const descriptor = await yt.getStreamDescriptor({
+            id: "eJFi2TK5174",
+            title: "Solar Eclipse",
+            url: "https://music.youtube.com/watch?v=eJFi2TK5174",
+            playableUrl: "https://www.youtube.com/watch?v=eJFi2TK5174",
+            duration: 219,
+            thumbnail: "",
+            author: "Drake & Don Toliver",
+            provider: "youtubemusic",
+        });
+
+        expect(dumpCalls).toBe(0);
+        expect(descriptor.directPassthroughEligible).toBe(true);
+        expect(descriptor.codec).toBe("opus");
+        expect(descriptor.container).toBe("webm");
+        expect(descriptor.url).toContain("itag=251");
+    });
 });

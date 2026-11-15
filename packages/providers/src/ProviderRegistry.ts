@@ -336,9 +336,20 @@ export class ProviderRegistry {
                 targetDurationSeconds: track.duration > 0 ? track.duration : undefined,
             });
 
-            // Reject knock-offs, unrequested remixes/covers/slowed versions, and unrelated tracks
+            // Reject knock-offs, unrequested remixes/covers/slowed versions, duration mismatches, and unrelated tracks
             const orderedCandidates = rankedCandidates
-                .filter((entry) => entry.score >= -10)
+                .filter((entry) => {
+                    if (entry.score < 10) return false;
+                    if (
+                        targetAlt === "soundcloud" &&
+                        track.duration >= 60 &&
+                        entry.track.duration > 0 &&
+                        Math.abs(entry.track.duration - track.duration) > 15
+                    ) {
+                        return false;
+                    }
+                    return true;
+                })
                 .map((entry) => entry.track);
 
             for (const candidate of orderedCandidates.slice(0, 3)) {

@@ -8,4 +8,5 @@ export * from "./SpotifyProvider.js";
 export * from "./trackMatcher.js";
 export * from "./YouTubeProvider.js";
 export * from "./YtDlpClient.js";
+export * from "./youtubeInnerTubePlayer.js";
 export * from "./youtubeMusic.js";

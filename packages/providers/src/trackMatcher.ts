@@ -30,8 +30,11 @@ const VARIANT_PATTERNS = {
     live: /\b(?:live(?:\s+at|\s+from|\s+in|\s+version|\s+performance|\s+session|\s+lounge)?|concert|fancam|unplugged|tiny\s+desk)\b/iu,
     acoustic: /\b(?:acoustic|stripped|unplugged)\b/iu,
     nonSong:
-        /\b(?:reaction|review|breakdown|tutorial|lesson|how\s+to\s+play|ringtone|snippet|preview|teaser|trailer|1\s*hour|10\s*hours|loop(?:ed)?|compilation|full\s+album)\b/iu,
+        /\b(?:reactions?|reviews?|breakdowns?|tutorials?|lessons?|how\s+to\s+play|ringtones?|snippets?|previews?|teasers?|trailers?|1\s*hour|10\s*hours|loop(?:ed)?|compilations?|full\s+album|let'?s\s+talk|podcast|interview|explained)\b/iu,
 } as const;
+
+const CALENDAR_DATE_AUTHOR_REGEX =
+    /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}(?:,\s*\d{4})?$/iu;
 
 const KNOCKOFF_AUTHOR_REGEX =
     /\b(?:tribute|karaoke|8-bit|lullaby|made\s+famous|in\s+the\s+style|backing\s+tracks?|type\s+beat|instrumentals?|kidz\s+bop|cover\s+band|ai\s+music)\b/iu;
@@ -184,12 +187,29 @@ export function scoreTrackCandidate(track: Track, context: TrackMatchContext): n
     ) {
         score -= 100;
     }
+    if (track.author && CALENDAR_DATE_AUTHOR_REGEX.test(track.author.trim())) {
+        score -= 120;
+    }
 
     // 2. Determine target title and target artists
     const parsedQuery = parseArtistTitleFromQuery(context.query);
-    const effectiveTitle = context.targetTitle
+    const authorTokensList = tokenizeMatchText(track.author ?? "");
+    const authorTokenSet = new Set(authorTokensList);
+
+    let effectiveTitle = context.targetTitle
         ? stripTitleNoise(context.targetTitle)
         : parsedQuery.titleHint;
+
+    // For free-form queries ("Solar Eclipse Drake Don Toliver" or "The Weeknd Blinding Lights"),
+    // strip candidate's verified author tokens from the query to isolate the intended song title
+    if (!context.targetTitle && !parsedQuery.artistHint && authorTokenSet.size > 0) {
+        const rawQueryTokens = tokenizeMatchText(parsedQuery.titleHint);
+        const strippedTitleTokens = rawQueryTokens.filter((t) => !authorTokenSet.has(t));
+        if (strippedTitleTokens.length > 0 && strippedTitleTokens.length < rawQueryTokens.length) {
+            effectiveTitle = strippedTitleTokens.join(" ");
+        }
+    }
+
     const effectiveArtists =
         context.targetArtists && context.targetArtists.length > 0
             ? context.targetArtists.flatMap((a) => splitArtistNames(a))
@@ -273,10 +293,9 @@ export function scoreTrackCandidate(track: Track, context: TrackMatchContext): n
         }
     }
 
-    // 5. Artist accuracy matching
-    const candidateArtistTokens = new Set([
-        ...tokenizeMatchText(track.author ?? ""),
-        ...(parsedCandidate.artistHint ? tokenizeMatchText(parsedCandidate.artistHint) : []),
+    // 5. Artist accuracy matching (distinguish verified uploader/author from title-only mention)
+    const verifiedAuthorAndUrlTokens = new Set([
+        ...authorTokensList,
         ...tokenizeMatchText(track.url),
     ]);
 
@@ -284,26 +303,33 @@ export function scoreTrackCandidate(track: Track, context: TrackMatchContext): n
         const primaryArtistTokens = tokenizeMatchText(effectiveArtists[0] ?? "");
         const allTargetArtistTokens = effectiveArtists.flatMap((a) => tokenizeMatchText(a));
 
-        let matchedArtistTokens = 0;
+        let verifiedMatchedTokens = 0;
+        let titleMatchedTokens = 0;
         for (const tok of allTargetArtistTokens) {
-            if (candidateArtistTokens.has(tok) || candidateAllTokens.has(tok)) {
-                matchedArtistTokens += 1;
+            if (verifiedAuthorAndUrlTokens.has(tok)) {
+                verifiedMatchedTokens += 1;
+            } else if (candidateAllTokens.has(tok)) {
+                titleMatchedTokens += 1;
             }
         }
 
-        const primaryMatched =
+        const primaryVerified =
             primaryArtistTokens.length > 0 &&
-            primaryArtistTokens.every(
-                (tok) => candidateArtistTokens.has(tok) || candidateAllTokens.has(tok),
-            );
+            primaryArtistTokens.every((tok) => verifiedAuthorAndUrlTokens.has(tok));
+        const primaryInTitle =
+            primaryArtistTokens.length > 0 &&
+            primaryArtistTokens.every((tok) => candidateAllTokens.has(tok));
 
-        if (primaryMatched) {
-            score += 45;
-        } else if (matchedArtistTokens > 0) {
-            score += 25;
+        if (primaryVerified) {
+            score += 50;
+        } else if (verifiedMatchedTokens > 0) {
+            score += 32;
+        } else if (primaryInTitle || titleMatchedTokens > 0) {
+            // Artist name only appears in candidate title (e.g. third-party re-upload)
+            score += 12;
         } else {
             // Known target artist is completely absent from candidate author/title/url
-            score -= 60;
+            score -= 65;
         }
     }
 
@@ -348,22 +374,25 @@ export function scoreTrackCandidate(track: Track, context: TrackMatchContext): n
 
         if (targetDur > 0) {
             const diff = Math.abs(track.duration - targetDur);
-            if (diff <= 2) {
-                score += 45;
-            } else if (diff <= 5) {
+            if (diff <= 3) {
+                score += 50;
+            } else if (diff <= 7) {
                 score += 35;
-            } else if (diff <= 12) {
-                score += 20;
+            } else if (diff <= 15) {
+                score += 15;
             } else if (diff <= 25) {
-                score += 5;
-            } else if (diff > 90) {
-                score -= 75;
-            } else if (diff > 45) {
-                score -= 40;
+                score -= 10;
+            } else if (diff > 60) {
+                score -= 95;
+            } else if (diff > 35) {
+                score -= 60;
             } else {
-                score -= 15;
+                score -= 30;
             }
         }
+    } else if (track.provider === "youtubemusic" && !track.isLive) {
+        // Real YouTube Music songs always carry a duration; podcast/video episodes often have 0
+        score -= 40;
     }
 
     return score;

@@ -17,10 +17,15 @@ import {
     type YtDlpEntry,
     type YtDlpFormatEntry,
 } from "./YtDlpClient.js";
+import {
+    getOrFetchYouTubeVisitorData,
+    resolveYouTubeInnerTubePlayer,
+} from "./youtubeInnerTubePlayer.js";
 import { searchYouTubeMusicInnerTube, upgradeThumbnailUrl } from "./youtubeMusic.js";
 
 const YOUTUBE_FALLBACK_CLIENTS = [
     "youtube:player_client=android",
+    "youtube:player_client=ios",
     "youtube:player_client=tv_simply",
     "youtube:player_client=android_vr",
     "youtube:player_client=web_embedded",
@@ -100,6 +105,8 @@ export class YouTubeProvider implements MediaProvider {
         limit = 10,
         mode: SearchProviderMode = "dsp",
     ): Promise<SearchResult> {
+        // Warm visitorData token concurrently with search so stream resolution is 1-RTT
+        void getOrFetchYouTubeVisitorData().catch(() => null);
         const candidatePool = Math.max(limit, 8);
         if (mode === "dsp") {
             try {
@@ -158,6 +165,30 @@ export class YouTubeProvider implements MediaProvider {
     public async resolveUrl(url: string, kind: QueryKind): Promise<SearchResult> {
         const isCollection = kind === "playlist" || kind === "artist";
         const isYtm = isYouTubeMusicUrl(url);
+
+        if (!isCollection) {
+            const singleVideoId = extractYouTubeVideoId(url);
+            if (singleVideoId) {
+                const fastDump = await resolveYouTubeInnerTubePlayer(singleVideoId);
+                if (fastDump) {
+                    const fastSingle = mapEntryToTrack(
+                        fastDump,
+                        isYtm ? "youtubemusic" : undefined,
+                    );
+                    if (fastSingle) {
+                        this.entryCache.store(
+                            [url, fastSingle.url, fastSingle.playableUrl, fastSingle.id],
+                            fastDump,
+                        );
+                        return {
+                            type: "results",
+                            items: [fastSingle],
+                        };
+                    }
+                }
+            }
+        }
+
         const dump = await this.ytdlp.dumpJson(url, {
             flatPlaylist: isCollection,
             yesPlaylist: isCollection,
@@ -205,7 +236,10 @@ export class YouTubeProvider implements MediaProvider {
             return track;
         }
         const sourceUrl = track.playableUrl || track.url;
-        const dump = await this.ytdlp.dumpJson(sourceUrl, { noPlaylist: true });
+        const videoId = extractYouTubeVideoId(track.id) ?? extractYouTubeVideoId(sourceUrl);
+        const dump =
+            (videoId ? await resolveYouTubeInnerTubePlayer(videoId) : null) ??
+            (await this.ytdlp.dumpJson(sourceUrl, { noPlaylist: true }));
         this.entryCache.store([sourceUrl, track.url, track.id], dump);
         const hydrated = mapEntryToTrack(
             dump,
@@ -245,6 +279,21 @@ export class YouTubeProvider implements MediaProvider {
             if (!fmt?.url) {
                 this.entryCache.delete(cacheKeys);
                 entry = null;
+            }
+        }
+
+        // Fast Path: ~200ms direct mobile InnerTube player resolution (zero yt-dlp process spawn)
+        const videoId = extractYouTubeVideoId(track.id) ?? extractYouTubeVideoId(target);
+        if (!fmt?.url && videoId && !signal?.aborted) {
+            const innerTubeEntry = await resolveYouTubeInnerTubePlayer(videoId, signal);
+            if (innerTubeEntry) {
+                const innerTubeFmt = await selectPlayableFormatFromEntry(innerTubeEntry, signal);
+                if (innerTubeFmt?.url) {
+                    entry = innerTubeEntry;
+                    fmt = innerTubeFmt;
+                    this.botBlockedUntil = 0;
+                    this.entryCache.store(cacheKeys, innerTubeEntry);
+                }
             }
         }
 
@@ -315,6 +364,8 @@ export class YouTubeProvider implements MediaProvider {
                             format: "bestaudio/best",
                             extractorArgs,
                             forceIpv4: wasBotDetected,
+                            // Mobile/VR/TV clients are skipped by yt-dlp if --cookies is passed
+                            skipCookies: extractorArgs !== "youtube:player_client=web_embedded",
                             signal: raceController.signal,
                         });
                         const fallbackFmt = await selectPlayableFormatFromEntry(
@@ -371,7 +422,6 @@ export class YouTubeProvider implements MediaProvider {
         }
 
         const isLive = entry.is_live === true || entry.live_status === "is_live";
-        const videoId = extractYouTubeVideoId(track.id) ?? extractYouTubeVideoId(target);
         const canonicalKey = videoId ? `youtube:${videoId}` : `youtube:${target}`;
 
         const codec = fmt.acodec?.toLowerCase();

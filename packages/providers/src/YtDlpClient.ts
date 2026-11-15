@@ -69,6 +69,7 @@ export interface YtDlpDumpOptions {
     format?: string;
     extractorArgs?: string;
     forceIpv4?: boolean;
+    skipCookies?: boolean;
     ignoreErrors?: boolean;
     signal?: AbortSignal;
     timeoutMs?: number;
@@ -305,7 +306,13 @@ export class YtDlpClient {
                 args.push("-f", options.format);
             }
             if (options.extractorArgs) {
-                args.push("--extractor-args", options.extractorArgs);
+                const mergedExtractorArgs =
+                    this.visitorData &&
+                    options.extractorArgs.startsWith("youtube:") &&
+                    !options.extractorArgs.includes("visitor_data=")
+                        ? `${options.extractorArgs};visitor_data=${this.visitorData}`
+                        : options.extractorArgs;
+                args.push("--extractor-args", mergedExtractorArgs);
             }
             if (options.flatPlaylist) args.push("--flat-playlist");
             if (options.noPlaylist) args.push("--no-playlist");
@@ -318,7 +325,10 @@ export class YtDlpClient {
                 args.push("-4");
             }
 
-            this.appendAuthArgs(args);
+            this.appendAuthArgs(args, {
+                skipCookies: options.skipCookies,
+                hasYoutubeExtractorArgs: Boolean(options.extractorArgs?.startsWith("youtube:")),
+            });
             args.push("--", target);
             return args;
         };
@@ -471,9 +481,16 @@ export class YtDlpClient {
         return "yt-dlp";
     }
 
-    private appendAuthArgs(args: string[]): string | null {
-        if (this.visitorData) {
+    private appendAuthArgs(
+        args: string[],
+        opts: { skipCookies?: boolean; hasYoutubeExtractorArgs?: boolean } = {},
+    ): string | null {
+        if (this.visitorData && !opts.hasYoutubeExtractorArgs) {
             args.push("--extractor-args", `youtube:visitor_data=${this.visitorData}`);
+        }
+        if (opts.skipCookies) {
+            args.push("--no-cookies");
+            return null;
         }
         if (this.cookiesPath && existsSync(this.cookiesPath)) {
             const st = statSync(this.cookiesPath);

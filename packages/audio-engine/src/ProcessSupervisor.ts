@@ -73,12 +73,16 @@ export class ProcessSupervisor {
             stderrRing = (stderrRing + chunk).slice(-4096);
         });
 
+        let killPromise: Promise<void> | null = null;
         const kill = async (): Promise<void> => {
+            this.active.delete(id);
             if (child.exitCode !== null || child.signalCode !== null) {
-                this.active.delete(id);
                 return;
             }
-            return new Promise<void>((resolve) => {
+            if (killPromise) {
+                return killPromise;
+            }
+            killPromise = new Promise<void>((resolve) => {
                 let settled = false;
                 const done = () => {
                     if (settled) return;
@@ -114,6 +118,7 @@ export class ProcessSupervisor {
                 }, 250);
                 forceTimer.unref?.();
             });
+            return killPromise;
         };
 
         const handle: SpawnedProcessHandle = {
