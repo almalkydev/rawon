@@ -133,9 +133,6 @@ export class GoogleLoginService {
             cookiesPath: saved.cookiesPath,
             forceRefreshVisitorData: true,
         }).catch(() => null);
-        if (visitorData) {
-            this.ytdlp.setVisitorData(visitorData);
-        }
 
         return this.store.saveAuthSession({
             id: 1,

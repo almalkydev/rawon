@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import {
     type PlaylistMetadata,
     ProviderError,
@@ -29,6 +30,14 @@ const YOUTUBE_FALLBACK_CLIENTS = [
     "youtube:player_client=ios",
     "youtube:player_client=tv_simply",
     "youtube:player_client=android_vr",
+    "youtube:player_client=web_embedded",
+] as const;
+
+const YOUTUBE_COOKIE_FALLBACK_CLIENTS = [
+    "youtube:player_client=web_creator",
+    "youtube:player_client=mweb",
+    "youtube:player_client=web",
+    "youtube:player_client=tv_downgraded",
     "youtube:player_client=web_embedded",
 ] as const;
 
@@ -112,6 +121,11 @@ export class YouTubeProvider implements MediaProvider {
         }
     }
 
+    private hasCookies(): boolean {
+        const p = this.ytdlp.getCookiesPath?.();
+        return Boolean(p && existsSync(p));
+    }
+
     private getInnerTubeOptions(): { cookiesPath?: string | null; visitorData?: string | null } {
         return {
             cookiesPath: this.ytdlp.getCookiesPath?.() ?? null,
@@ -120,13 +134,7 @@ export class YouTubeProvider implements MediaProvider {
     }
 
     private warmVisitorData(): void {
-        void getOrFetchYouTubeVisitorData(undefined, this.getInnerTubeOptions())
-            .then((vd) => {
-                if (vd && !this.ytdlp.getVisitorData?.()) {
-                    this.ytdlp.setVisitorData?.(vd);
-                }
-            })
-            .catch(() => null);
+        void getOrFetchYouTubeVisitorData(undefined, this.getInnerTubeOptions()).catch(() => null);
     }
 
     private async resolveFastPlayerEntry(
@@ -408,8 +416,13 @@ export class YouTubeProvider implements MediaProvider {
             }
         }
 
+        const hasCookies = this.hasCookies();
+        const primaryCookieExtractorArgs = hasCookies
+            ? "youtube:player_client=web_creator,web,mweb,tv_downgraded,tv_simply,visionos"
+            : undefined;
+
         if (!fmt?.url && !signal?.aborted) {
-            if (this.botBlockedUntil > Date.now()) {
+            if (this.botBlockedUntil > Date.now() && !hasCookies) {
                 throw new ProviderError(
                     "YouTube requested bot-verification cookies",
                     "bot_detection",
@@ -420,6 +433,9 @@ export class YouTubeProvider implements MediaProvider {
                 entry = await this.ytdlp.dumpJson(target, {
                     noPlaylist: true,
                     format: "bestaudio[acodec=opus]/bestaudio/best",
+                    ...(primaryCookieExtractorArgs
+                        ? { extractorArgs: primaryCookieExtractorArgs }
+                        : {}),
                     signal,
                 });
                 fmt = await selectPlayableFormatFromEntry(entry, signal);
@@ -444,6 +460,9 @@ export class YouTubeProvider implements MediaProvider {
                 const ipv4Entry = await this.ytdlp.dumpJson(target, {
                     noPlaylist: true,
                     format: "bestaudio[acodec=opus]/bestaudio/best",
+                    ...(primaryCookieExtractorArgs
+                        ? { extractorArgs: primaryCookieExtractorArgs }
+                        : {}),
                     forceIpv4: true,
                     signal,
                 });
@@ -467,16 +486,34 @@ export class YouTubeProvider implements MediaProvider {
             const onParentAbort = () => raceController.abort();
             signal?.addEventListener("abort", onParentAbort, { once: true });
 
+            const fallbackCandidates: Array<{ extractorArgs: string; skipCookies: boolean }> =
+                hasCookies
+                    ? [
+                          ...YOUTUBE_COOKIE_FALLBACK_CLIENTS.map((extractorArgs) => ({
+                              extractorArgs,
+                              skipCookies: false,
+                          })),
+                          ...YOUTUBE_FALLBACK_CLIENTS.filter(
+                              (c) => c !== "youtube:player_client=web_embedded",
+                          ).map((extractorArgs) => ({
+                              extractorArgs,
+                              skipCookies: true,
+                          })),
+                      ]
+                    : YOUTUBE_FALLBACK_CLIENTS.map((extractorArgs) => ({
+                          extractorArgs,
+                          skipCookies: extractorArgs !== "youtube:player_client=web_embedded",
+                      }));
+
             try {
                 const winner = await Promise.any(
-                    YOUTUBE_FALLBACK_CLIENTS.map(async (extractorArgs) => {
+                    fallbackCandidates.map(async ({ extractorArgs, skipCookies }) => {
                         const fallbackEntry = await this.ytdlp.dumpJson(target, {
                             noPlaylist: true,
                             format: "bestaudio/best",
                             extractorArgs,
                             forceIpv4: wasBotDetected,
-                            // Mobile/VR/TV clients are skipped by yt-dlp if --cookies is passed
-                            skipCookies: extractorArgs !== "youtube:player_client=web_embedded",
+                            skipCookies,
                             signal: raceController.signal,
                         });
                         const fallbackFmt = await selectPlayableFormatFromEntry(

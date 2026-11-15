@@ -89,6 +89,15 @@ export class CookieStore {
 
     public restoreFromEncryptedIfNeeded(): string | null {
         if (existsSync(this.cookiesTxtPath)) {
+            try {
+                const raw = readFileSync(this.cookiesTxtPath, "utf8");
+                const entries = parseNetscapeCookieEntries(raw);
+                if (entries.length > 0) {
+                    this.saveCookies(entries);
+                }
+            } catch {
+                // Keep existing file if re-normalization fails
+            }
             return this.cookiesTxtPath;
         }
         if (!this.secretKey || !existsSync(this.encryptedPath)) {
@@ -105,7 +114,12 @@ export class CookieStore {
             const plain = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString(
                 "utf8",
             );
-            writeFileSync(this.cookiesTxtPath, plain, { encoding: "utf8", mode: 0o600 });
+            const entries = parseNetscapeCookieEntries(plain);
+            if (entries.length > 0) {
+                this.saveCookies(entries);
+            } else {
+                writeFileSync(this.cookiesTxtPath, plain, { encoding: "utf8", mode: 0o600 });
+            }
             return this.cookiesTxtPath;
         } catch {
             return null;
@@ -139,7 +153,10 @@ function parseNetscapeLines(text: string): NetscapeCookieEntry[] {
         const isHttpOnly = line.startsWith("#HttpOnly_");
         if (line.startsWith("#") && !isHttpOnly) continue;
         const effectiveLine = isHttpOnly ? line.slice("#HttpOnly_".length) : line;
-        const cols = effectiveLine.split("\t");
+        let cols = effectiveLine.split("\t");
+        if (cols.length < 7) {
+            cols = effectiveLine.split(/\s+/u);
+        }
         if (cols.length < 7) continue;
         const domain = (cols[0] ?? ".youtube.com").trim();
         const name = cols[5] ?? "";
@@ -153,6 +170,38 @@ function parseNetscapeLines(text: string): NetscapeCookieEntry[] {
             name,
             value: cols.slice(6).join("\t"),
             ...(isHttpOnly ? { httpOnly: true } : {}),
+        });
+    }
+    return entries;
+}
+
+function parseHeaderStringCookies(text: string): NetscapeCookieEntry[] {
+    const cleaned = stripBom(text)
+        .trim()
+        .replace(/^cookie:\s*/iu, "");
+    if (!cleaned.includes("=") || cleaned.includes("\n") || cleaned.startsWith("[")) {
+        return [];
+    }
+    const pairs = cleaned
+        .split(";")
+        .map((p) => p.trim())
+        .filter(Boolean);
+    if (pairs.length < 2) return [];
+    const entries: NetscapeCookieEntry[] = [];
+    for (const pair of pairs) {
+        const eqIdx = pair.indexOf("=");
+        if (eqIdx <= 0) continue;
+        const name = pair.slice(0, eqIdx).trim();
+        const value = pair.slice(eqIdx + 1).trim();
+        if (!name || !value || /\s/u.test(name)) continue;
+        entries.push({
+            domain: ".youtube.com",
+            includeSubdomains: true,
+            path: "/",
+            secure: true,
+            expiration: 0,
+            name,
+            value,
         });
     }
     return entries;
@@ -213,6 +262,11 @@ export function parseNetscapeCookieEntries(rawInput: string): NetscapeCookieEntr
         return netscapeDirect;
     }
 
+    const headerDirect = parseHeaderStringCookies(cleaned);
+    if (headerDirect.length > 0) {
+        return headerDirect;
+    }
+
     const compact = cleaned.trim().replace(/\s+/gu, "");
     if (compact.length >= 16 && /^[A-Za-z0-9+/=]+$/u.test(compact)) {
         try {
@@ -221,7 +275,11 @@ export function parseNetscapeCookieEntries(rawInput: string): NetscapeCookieEntr
             if (jsonDecoded.length > 0) {
                 return jsonDecoded;
             }
-            return parseNetscapeLines(decoded);
+            const netscapeDecoded = parseNetscapeLines(decoded);
+            if (netscapeDecoded.length > 0) {
+                return netscapeDecoded;
+            }
+            return parseHeaderStringCookies(decoded);
         } catch {
             return [];
         }

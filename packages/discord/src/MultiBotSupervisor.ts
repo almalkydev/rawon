@@ -119,15 +119,7 @@ export class MultiBotSupervisor {
             }
         }
 
-        void getOrFetchYouTubeVisitorData(undefined, {
-            cookiesPath: this.providers.ytdlp.getCookiesPath(),
-        })
-            .then((visitorData) => {
-                if (visitorData) {
-                    this.providers.ytdlp.setVisitorData(visitorData);
-                }
-            })
-            .catch(() => undefined);
+        void getOrFetchYouTubeVisitorData().catch(() => undefined);
 
         this.requestChannels = new RequestChannelService({
             store: this.store,

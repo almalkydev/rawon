@@ -1,16 +1,19 @@
 import { createHash } from "node:crypto";
 import { setDefaultResultOrder } from "node:dns";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { setDefaultAutoSelectFamily } from "node:net";
 import type { YtDlpEntry, YtDlpFormatEntry } from "./YtDlpClient.js";
 
-// Prefer IPv4 DNS resolution so YouTube/googlevideo URLs signed for IPv4 never 403 over IPv6
+// Prefer IPv4 DNS resolution and disable Happy Eyeballs IPv6 racing so dual-stack VPS hosts avoid IPv6 bot-blocks
 try {
     setDefaultResultOrder("ipv4first");
+    setDefaultAutoSelectFamily?.(false);
 } catch {
-    // Ignore in environments where DNS order cannot be changed
+    // Ignore in environments where DNS/net defaults cannot be changed
 }
 
 const SW_JS_DATA_URL = "https://www.youtube.com/sw.js_data";
+const INNERTUBE_VISITOR_ID_URL = "https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false";
 const INNERTUBE_PLAYER_URL = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false";
 const YOUTUBE_ORIGIN = "https://www.youtube.com";
 
@@ -45,6 +48,23 @@ const PRIMARY_CLIENTS: readonly InnerTubeClientSpec[] = [
 
 const MOBILE_CLIENTS: readonly InnerTubeClientSpec[] = [
     {
+        name: "IOS_PRODUCER",
+        clientId: "92",
+        clientVersion: "0.129.1",
+        userAgent:
+            "com.google.ios.youtubeproducer/0.129.1 (iPhone16,2; U; CPU iOS 18_2_1 like Mac OS X;)",
+        clientContext: {
+            clientName: "IOS_PRODUCER",
+            clientVersion: "0.129.1",
+            deviceMake: "Apple",
+            deviceModel: "iPhone16,2",
+            osName: "iPhone",
+            osVersion: "18.2.1.22C161",
+            hl: "en",
+            gl: "US",
+        },
+    },
+    {
         name: "IOS",
         clientId: "5",
         clientVersion: "20.03.02",
@@ -78,7 +98,19 @@ const MOBILE_CLIENTS: readonly InnerTubeClientSpec[] = [
 ];
 
 const AUTHENTICATED_CLIENTS: readonly InnerTubeClientSpec[] = [
-    ...PRIMARY_CLIENTS,
+    {
+        name: "WEB_CREATOR",
+        clientId: "62",
+        clientVersion: "1.20250312.03.00",
+        userAgent:
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        clientContext: {
+            clientName: "WEB_CREATOR",
+            clientVersion: "1.20250312.03.00",
+            hl: "en",
+            gl: "US",
+        },
+    },
     {
         name: "TVHTML5",
         clientId: "7",
@@ -218,8 +250,7 @@ export async function getOrFetchYouTubeVisitorData(
     signal?: AbortSignal,
     options?: InnerTubePlayerOptions,
 ): Promise<string | null> {
-    const cookieAuth = loadYouTubeAuthFromCookiesFile(options?.cookiesPath);
-    const cookieKey = cookieAuth ? `${cookieAuth.cookiesPath}:${cookieAuth.mtimeMs}` : "anon";
+    const cookieKey = "anon";
 
     if (
         !options?.forceRefreshVisitorData &&
@@ -235,21 +266,64 @@ export async function getOrFetchYouTubeVisitorData(
 
     inflightVisitorPromise = (async () => {
         try {
-            const headers: Record<string, string> = {
-                "user-agent":
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            };
-            if (cookieAuth?.cookieHeader) {
-                headers.cookie = cookieAuth.cookieHeader;
+            let token: string | null = null;
+            try {
+                const res = await fetch(SW_JS_DATA_URL, {
+                    method: "GET",
+                    signal: signal ?? AbortSignal.timeout(2_500),
+                    headers: {
+                        "user-agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                    },
+                });
+                if (res.ok) {
+                    const text = await res.text();
+                    token = extractVisitorDataFromSwJsData(text);
+                }
+            } catch {
+                // Fall through to official InnerTube visitor_id endpoint
             }
-            const res = await fetch(SW_JS_DATA_URL, {
-                method: "GET",
-                signal: signal ?? AbortSignal.timeout(2_500),
-                headers,
-            });
-            if (!res.ok) return options?.visitorData ?? null;
-            const text = await res.text();
-            const token = extractVisitorDataFromSwJsData(text) ?? options?.visitorData ?? null;
+
+            if (!token && !signal?.aborted) {
+                try {
+                    const vRes = await fetch(INNERTUBE_VISITOR_ID_URL, {
+                        method: "POST",
+                        signal: signal ?? AbortSignal.timeout(2_500),
+                        headers: {
+                            "content-type": "application/json",
+                            "user-agent":
+                                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+                            "x-youtube-client-name": "101",
+                            "x-youtube-client-version": "0.1",
+                        },
+                        body: JSON.stringify({
+                            context: {
+                                client: {
+                                    clientName: "VISIONOS",
+                                    clientVersion: "0.1",
+                                    hl: "en",
+                                    gl: "US",
+                                },
+                            },
+                        }),
+                    });
+                    if (vRes.ok) {
+                        const vData = (await vRes.json()) as {
+                            responseContext?: { visitorData?: string };
+                        };
+                        if (
+                            typeof vData?.responseContext?.visitorData === "string" &&
+                            vData.responseContext.visitorData.length >= 16
+                        ) {
+                            token = vData.responseContext.visitorData;
+                        }
+                    }
+                } catch {
+                    // Ignore visitor_id fallback error
+                }
+            }
+
+            token = token ?? options?.visitorData ?? null;
             if (token) {
                 cachedVisitorData = {
                     value: token,
@@ -528,47 +602,33 @@ export async function resolveYouTubeInnerTubePlayer(
         return null;
     }
 
-    const cookieAuth = loadYouTubeAuthFromCookiesFile(options?.cookiesPath);
-
-    // 1. Primary VISIONOS InnerTube client (with cookieAuth immediately when available so VPS IPs don't waste an RTT)
-    const primaryEntry = await raceClientSpecs(
-        videoId,
-        PRIMARY_CLIENTS,
-        visitorData,
-        cookieAuth,
-        signal,
-    );
+    // 1. Primary VISIONOS InnerTube client (never pass web cookies to VISIONOS; it uses anonymous visitorData)
+    const primaryEntry = await raceClientSpecs(videoId, PRIMARY_CLIENTS, visitorData, null, signal);
     if (primaryEntry) {
         return primaryEntry;
     }
 
-    // 2. If cookieAuth was used and failed (e.g. expired cookies), try unauthenticated VISIONOS, or vice-versa
-    if (cookieAuth && !signal?.aborted) {
-        const unauthPrimary = await raceClientSpecs(
-            videoId,
-            PRIMARY_CLIENTS,
-            visitorData,
-            null,
-            signal,
-        );
-        if (unauthPrimary) {
-            return unauthPrimary;
+    // 2. Fallback to IOS_PRODUCER (works without visitorData or PO token) + mobile clients
+    if (!signal?.aborted) {
+        const mobileEntry = await raceClientSpecs(videoId, MOBILE_CLIENTS, null, null, signal);
+        if (mobileEntry) {
+            return mobileEntry;
         }
-        const authFallback = await raceClientSpecs(
+    }
+
+    // 3. Authenticated web/TV InnerTube clients when cookies.txt is configured
+    const cookieAuth = loadYouTubeAuthFromCookiesFile(options?.cookiesPath);
+    if (cookieAuth && !signal?.aborted) {
+        const authEntry = await raceClientSpecs(
             videoId,
-            AUTHENTICATED_CLIENTS.slice(1),
+            AUTHENTICATED_CLIENTS,
             visitorData,
             cookieAuth,
             signal,
         );
-        if (authFallback) {
-            return authFallback;
+        if (authEntry) {
+            return authEntry;
         }
-    }
-
-    // 3. Fallback unauthenticated mobile clients
-    if (!signal?.aborted) {
-        return raceClientSpecs(videoId, MOBILE_CLIENTS, visitorData, null, signal);
     }
 
     return null;

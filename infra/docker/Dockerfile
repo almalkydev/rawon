@@ -45,7 +45,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && if [ "$INSTALL_CHROMIUM" = "true" ]; then \
          apt-get install -y --no-install-recommends chromium; \
        fi \
-    && curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
+    && ARCH="$(uname -m)" \
+    && case "$ARCH" in \
+         x86_64|amd64) YTDLP_BIN="yt-dlp_linux" ;; \
+         aarch64|arm64) YTDLP_BIN="yt-dlp_linux_aarch64" ;; \
+         *) YTDLP_BIN="yt-dlp" ;; \
+       esac \
+    && curl -fsSL "https://github.com/yt-dlp/yt-dlp/releases/latest/download/${YTDLP_BIN}" -o /usr/local/bin/yt-dlp \
     && chmod 0755 /usr/local/bin/yt-dlp \
     && apt-get purge -y --auto-remove curl \
     && rm -rf /var/lib/apt/lists/*

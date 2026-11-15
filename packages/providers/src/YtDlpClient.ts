@@ -291,6 +291,9 @@ export class YtDlpClient {
     }
 
     public async dumpJson(target: string, options: YtDlpDumpOptions = {}): Promise<YtDlpEntry> {
+        const hasActiveCookies = Boolean(
+            !options.skipCookies && this.cookiesPath && existsSync(this.cookiesPath),
+        );
         const buildArgs = (withRemoteComponents: boolean): string[] => {
             const args = [
                 "--dump-single-json",
@@ -302,7 +305,7 @@ export class YtDlpClient {
                 "node",
             ];
 
-            if (withRemoteComponents) {
+            if (withRemoteComponents || hasActiveCookies) {
                 args.push("--remote-components", "ejs:github");
             }
 
@@ -317,6 +320,7 @@ export class YtDlpClient {
             if (options.extractorArgs) {
                 const mergedExtractorArgs =
                     this.visitorData &&
+                    !hasActiveCookies &&
                     options.extractorArgs.startsWith("youtube:") &&
                     !options.extractorArgs.includes("visitor_data=")
                         ? `${options.extractorArgs};visitor_data=${this.visitorData}`
@@ -348,8 +352,8 @@ export class YtDlpClient {
         // Retry with remote EJS solver components only when bundled solver hits a JS/challenge error
         const lowerErr = result.stderr.toLowerCase();
         const needsRemoteEjs =
+            !hasActiveCookies &&
             result.exitCode !== 0 &&
-            !lowerErr.includes("not a bot") &&
             !lowerErr.includes("confirm your age") &&
             !lowerErr.includes("age-restricted") &&
             !lowerErr.includes("unavailable") &&
@@ -412,6 +416,7 @@ export class YtDlpClient {
         targetUrl: string,
         options: { format?: string; signal?: AbortSignal } = {},
     ): { stream: Readable; process: ChildProcess; kill: () => void } {
+        const hasActiveCookies = Boolean(this.cookiesPath && existsSync(this.cookiesPath));
         const args = [
             "-f",
             options.format ?? "bestaudio[acodec=opus]/bestaudio/best",
@@ -425,7 +430,15 @@ export class YtDlpClient {
             "--remote-components",
             "ejs:github",
         ];
-        const tmpCookiePath = this.appendAuthArgs(args);
+        if (hasActiveCookies) {
+            args.push(
+                "--extractor-args",
+                "youtube:player_client=web_creator,web,mweb,tv_downgraded,tv_simply,visionos",
+            );
+        }
+        const tmpCookiePath = this.appendAuthArgs(args, {
+            hasYoutubeExtractorArgs: hasActiveCookies,
+        });
         args.push("--", targetUrl);
 
         const child = spawn(this.binaryPath, args, {
@@ -494,7 +507,10 @@ export class YtDlpClient {
         args: string[],
         opts: { skipCookies?: boolean; hasYoutubeExtractorArgs?: boolean } = {},
     ): string | null {
-        if (this.visitorData && !opts.hasYoutubeExtractorArgs) {
+        const hasActiveCookies = Boolean(
+            !opts.skipCookies && this.cookiesPath && existsSync(this.cookiesPath),
+        );
+        if (this.visitorData && !opts.hasYoutubeExtractorArgs && !hasActiveCookies) {
             args.push("--extractor-args", `youtube:visitor_data=${this.visitorData}`);
         }
         if (opts.skipCookies) {
@@ -510,11 +526,46 @@ export class YtDlpClient {
                     `.ytdlp-tmp-cookies-${process.pid}-${seq}.txt`,
                 );
                 try {
-                    copyFileSync(this.cookiesPath, tmpPath);
+                    const raw = readFileSync(this.cookiesPath, "utf8");
+                    const normalizedLines = raw.split(/\r?\n/).map((line) => {
+                        const trimmed = line.trim();
+                        if (
+                            !trimmed ||
+                            (trimmed.startsWith("#") && !trimmed.startsWith("#HttpOnly_"))
+                        ) {
+                            return line;
+                        }
+                        const parts = trimmed.includes("\t")
+                            ? trimmed.split("\t")
+                            : trimmed.split(/\s+/);
+                        if (parts.length < 7) return line;
+                        const rawDomain = parts[0] ?? "";
+                        const httpOnlyPrefix = rawDomain.startsWith("#HttpOnly_")
+                            ? "#HttpOnly_"
+                            : "";
+                        const bareDomain = rawDomain.replace(/^#HttpOnly_/, "");
+                        const domain = bareDomain.startsWith(".") ? bareDomain : `.${bareDomain}`;
+                        return [
+                            `${httpOnlyPrefix}${domain}`,
+                            "TRUE",
+                            parts[2] || "/",
+                            parts[3]?.toUpperCase() === "FALSE" ? "FALSE" : "TRUE",
+                            parts[4] || "0",
+                            parts[5] ?? "",
+                            parts.slice(6).join("\t"),
+                        ].join("\t");
+                    });
+                    writeFileSync(tmpPath, normalizedLines.join("\n"), "utf8");
                     args.push("--cookies", tmpPath);
                     return tmpPath;
                 } catch {
-                    args.push("--cookies", this.cookiesPath);
+                    try {
+                        copyFileSync(this.cookiesPath, tmpPath);
+                        args.push("--cookies", tmpPath);
+                        return tmpPath;
+                    } catch {
+                        args.push("--cookies", this.cookiesPath);
+                    }
                 }
             }
         }
