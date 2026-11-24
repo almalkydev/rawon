@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import {
     type PlaylistMetadata,
     ProviderError,
@@ -20,10 +20,17 @@ import {
     type YtDlpFormatEntry,
 } from "./YtDlpClient.js";
 import {
+    fetchYouTubeVideosByIdsDataApi,
+    resolveYouTubePlaylistDataApi,
+    searchYouTubeDataApi,
+} from "./youtubeDataApi.js";
+import {
     getOrFetchYouTubeVisitorData,
-    resolveYouTubeInnerTubePlayer,
+    loadYouTubeCookieHeader,
+    resolveYouTubeInnerTubePlayerWithStatus,
 } from "./youtubeInnerTubePlayer.js";
 import { searchYouTubeMusicInnerTube, upgradeThumbnailUrl } from "./youtubeMusic.js";
+import { resolveYouTubeCipheredStream, type YouTubeOAuthManager } from "./youtubeOAuth.js";
 
 interface YtDlpFallbackCandidate {
     extractorArgs: string;
@@ -111,14 +118,32 @@ function mapEntryToTrack(
     };
 }
 
+export interface YouTubeProviderOptions {
+    youtubeApiKey?: string | null;
+    oauthManager?: YouTubeOAuthManager | null;
+}
+
 export class YouTubeProvider implements MediaProvider {
     public readonly name = "youtube" as const;
     private readonly entryCache = new ResolvedEntryCache();
-    private readonly inflightPlayerLookups = new Map<string, Promise<YtDlpEntry | null>>();
+    private readonly inflightPlayerLookups = new Map<
+        string,
+        Promise<{ entry: YtDlpEntry | null; botDetected: boolean }>
+    >();
     private readonly forceProbeVideoIds = new Set<string>();
+    private readonly youtubeApiKey: string | null;
+    private readonly oauthManager: YouTubeOAuthManager | null;
     private botBlockedUntil = 0;
+    private cookieBotBlockedUntil = 0;
+    private cookieBlockedMtimeMs = -1;
 
-    public constructor(private readonly ytdlp: YtDlpClient) {}
+    public constructor(
+        private readonly ytdlp: YtDlpClient,
+        options?: YouTubeProviderOptions,
+    ) {
+        this.youtubeApiKey = options?.youtubeApiKey?.trim() || null;
+        this.oauthManager = options?.oauthManager ?? null;
+    }
 
     public isBotBlocked(): boolean {
         return this.botBlockedUntil > Date.now();
@@ -142,9 +167,24 @@ export class YouTubeProvider implements MediaProvider {
         }
     }
 
-    private hasCookies(): boolean {
+    private getCookieState(): {
+        hasCookies: boolean;
+        mtimeMs: number;
+        isCookieBlocked: boolean;
+    } {
         const p = this.ytdlp.getCookiesPath?.();
-        return Boolean(p && existsSync(p));
+        if (!p || !existsSync(p)) {
+            return { hasCookies: false, mtimeMs: -1, isCookieBlocked: false };
+        }
+        let mtimeMs = 0;
+        try {
+            mtimeMs = statSync(p).mtimeMs;
+        } catch {
+            return { hasCookies: false, mtimeMs: -1, isCookieBlocked: false };
+        }
+        const isCookieBlocked =
+            this.cookieBlockedMtimeMs === mtimeMs && this.cookieBotBlockedUntil > Date.now();
+        return { hasCookies: true, mtimeMs, isCookieBlocked };
     }
 
     private getInnerTubeOptions(): { cookiesPath?: string | null; visitorData?: string | null } {
@@ -158,33 +198,83 @@ export class YouTubeProvider implements MediaProvider {
         void getOrFetchYouTubeVisitorData(undefined, this.getInnerTubeOptions()).catch(() => null);
     }
 
-    private async resolveFastPlayerEntry(
+    private async resolveFastPlayerEntryWithStatus(
         videoId: string,
         signal?: AbortSignal,
-    ): Promise<YtDlpEntry | null> {
+    ): Promise<{ entry: YtDlpEntry | null; botDetected: boolean }> {
         const existing = this.inflightPlayerLookups.get(videoId);
         if (existing) {
             return existing;
         }
-        const promise = resolveYouTubeInnerTubePlayer(videoId, signal, this.getInnerTubeOptions())
-            .then((entry) => {
-                if (entry) {
+        const promise = (async () => {
+            const innerTubeOpts = this.getInnerTubeOptions();
+            const cookieState = this.getCookieState();
+            const cookieHeader =
+                cookieState.hasCookies && !cookieState.isCookieBlocked
+                    ? loadYouTubeCookieHeader(innerTubeOpts.cookiesPath)
+                    : null;
+
+            // 1. If VPS OAuth2 is linked, resolve via authenticated TVHTML5 + JS cipher first (~250ms)
+            if (this.oauthManager?.hasRefreshToken() && !signal?.aborted) {
+                const oauthRes = await resolveYouTubeCipheredStream(videoId, {
+                    oauthManager: this.oauthManager,
+                    signal,
+                });
+                if (oauthRes.entry) {
+                    return oauthRes;
+                }
+            }
+
+            // 2. Direct mobile/VISIONOS/ANDROID_VR InnerTube (~180ms)
+            const innerRes = await resolveYouTubeInnerTubePlayerWithStatus(
+                videoId,
+                signal,
+                innerTubeOpts,
+            );
+            if (innerRes.entry) {
+                return innerRes;
+            }
+
+            // 3. Ciphered YTMUSIC / cookie-WEB fallback via cached Node.js player.js (~350ms, zero yt-dlp spawn)
+            const cipherRes = await resolveYouTubeCipheredStream(videoId, {
+                cookieHeader,
+                signal,
+            });
+            if (cipherRes.entry) {
+                return cipherRes;
+            }
+
+            return {
+                entry: null,
+                botDetected: innerRes.botDetected || cipherRes.botDetected,
+            };
+        })()
+            .then((res) => {
+                if (res.entry) {
                     this.entryCache.store(
                         [
                             videoId,
                             `https://www.youtube.com/watch?v=${videoId}`,
                             `https://music.youtube.com/watch?v=${videoId}`,
                         ],
-                        entry,
+                        res.entry,
                     );
                 }
-                return entry;
+                return res;
             })
             .finally(() => {
                 this.inflightPlayerLookups.delete(videoId);
             });
         this.inflightPlayerLookups.set(videoId, promise);
         return promise;
+    }
+
+    private async resolveFastPlayerEntry(
+        videoId: string,
+        signal?: AbortSignal,
+    ): Promise<YtDlpEntry | null> {
+        const res = await this.resolveFastPlayerEntryWithStatus(videoId, signal);
+        return res.entry;
     }
 
     public warmTrackPlayerEntry(track: Track | undefined): void {
@@ -264,6 +354,18 @@ export class YouTubeProvider implements MediaProvider {
     }
 
     private async searchDirectYouTube(query: string, fetchLimit: number): Promise<Track[]> {
+        if (this.youtubeApiKey) {
+            const apiItems = await searchYouTubeDataApi(
+                query,
+                this.youtubeApiKey,
+                fetchLimit,
+                "youtube",
+            ).catch(() => null);
+            if (apiItems && apiItems.length > 0) {
+                return apiItems;
+            }
+        }
+
         const dump = await this.ytdlp.dumpJson(`ytsearch${fetchLimit}:${query}`, {
             flatPlaylist: true,
             playlistEnd: fetchLimit,
@@ -281,9 +383,40 @@ export class YouTubeProvider implements MediaProvider {
         const isCollection = kind === "playlist" || kind === "artist";
         const isYtm = isYouTubeMusicUrl(url);
 
+        if (isCollection && this.youtubeApiKey) {
+            try {
+                const playlistId = new URL(url).searchParams.get("list")?.trim() ?? "";
+                if (playlistId) {
+                    const apiPlaylist = await resolveYouTubePlaylistDataApi(
+                        playlistId,
+                        url,
+                        this.youtubeApiKey,
+                    );
+                    if (apiPlaylist && apiPlaylist.items.length > 0) {
+                        this.warmTrackPlayerEntry(apiPlaylist.items[0]);
+                        return apiPlaylist;
+                    }
+                }
+            } catch {
+                // Fall back to yt-dlp playlist extraction
+            }
+        }
+
         if (!isCollection) {
             const singleVideoId = extractYouTubeVideoId(url);
             if (singleVideoId) {
+                if (this.youtubeApiKey) {
+                    const apiTracks = await fetchYouTubeVideosByIdsDataApi(
+                        [singleVideoId],
+                        this.youtubeApiKey,
+                        isYtm ? "youtubemusic" : "youtube",
+                    ).catch(() => []);
+                    if (apiTracks[0]) {
+                        this.warmTrackPlayerEntry(apiTracks[0]);
+                        return { type: "results", items: [apiTracks[0]] };
+                    }
+                }
+
                 const fastDump = await this.resolveFastPlayerEntry(singleVideoId);
                 if (fastDump) {
                     const fastSingle = mapEntryToTrack(
@@ -358,6 +491,20 @@ export class YouTubeProvider implements MediaProvider {
         }
         const sourceUrl = track.playableUrl || track.url;
         const videoId = extractYouTubeVideoId(track.id) ?? extractYouTubeVideoId(sourceUrl);
+        if (videoId && this.youtubeApiKey) {
+            const apiTracks = await fetchYouTubeVideosByIdsDataApi(
+                [videoId],
+                this.youtubeApiKey,
+                track.provider === "youtubemusic" ? "youtubemusic" : "youtube",
+            ).catch(() => []);
+            if (apiTracks[0]) {
+                return {
+                    ...track,
+                    ...apiTracks[0],
+                    thumbnail: apiTracks[0].thumbnail || track.thumbnail,
+                };
+            }
+        }
         const dump =
             (videoId ? await this.resolveFastPlayerEntry(videoId) : null) ??
             (await this.ytdlp.dumpJson(sourceUrl, { noPlaylist: true }));
@@ -413,9 +560,12 @@ export class YouTubeProvider implements MediaProvider {
             }
         }
 
-        // Fast Path: ~150ms direct VISIONOS InnerTube player resolution (zero yt-dlp process spawn, zero probe RTT)
+        // Fast Path: ~150-350ms direct InnerTube / OAuth2 / ciphered JS resolution (zero yt-dlp process spawn)
+        let fastBotDetected = false;
         if (!fmt?.url && videoId && !signal?.aborted) {
-            const innerTubeEntry = await this.resolveFastPlayerEntry(videoId, signal);
+            const fastRes = await this.resolveFastPlayerEntryWithStatus(videoId, signal);
+            fastBotDetected = fastRes.botDetected;
+            const innerTubeEntry = fastRes.entry;
             if (innerTubeEntry) {
                 const fastInnerTubeFmt =
                     !mustProbe && innerTubeEntry.extractor === "youtube:innertube:visionos"
@@ -429,6 +579,7 @@ export class YouTubeProvider implements MediaProvider {
                     entry = innerTubeEntry;
                     fmt = innerTubeFmt;
                     this.botBlockedUntil = 0;
+                    this.cookieBotBlockedUntil = 0;
                     if (mustProbe) {
                         this.forceProbeVideoIds.delete(videoId);
                     }
@@ -437,7 +588,8 @@ export class YouTubeProvider implements MediaProvider {
             }
         }
 
-        const hasCookies = this.hasCookies();
+        const cookieState = this.getCookieState();
+        const hasCookies = cookieState.hasCookies && !cookieState.isCookieBlocked;
         const hasPotProvider = Boolean(this.ytdlp.getPotProviderUrl?.());
         const primaryExtractorArgs = hasCookies
             ? "youtube:player_client=mweb,web_creator,web,tv_simply"
@@ -446,23 +598,43 @@ export class YouTubeProvider implements MediaProvider {
               : undefined;
 
         if (!fmt?.url && !signal?.aborted) {
-            if (this.botBlockedUntil > Date.now() && !hasCookies) {
+            if ((this.botBlockedUntil > Date.now() && !hasCookies) || cookieState.isCookieBlocked) {
                 throw new ProviderError(
                     "YouTube requested bot-verification cookies",
                     "bot_detection",
                     false,
                 );
             }
+
+            // If InnerTube already confirmed this VPS IP is bot-blocked and neither active cookies
+            // nor a reachable PO-Token server exist, skip 30s of dead yt-dlp spawns immediately
+            if (fastBotDetected && !hasCookies) {
+                const potReachable = hasPotProvider
+                    ? ((await this.ytdlp.isPotProviderReachable?.(signal)) ?? true)
+                    : false;
+                if (!potReachable) {
+                    this.botBlockedUntil = Date.now() + 180_000;
+                    throw new ProviderError(
+                        "YouTube requested bot-verification cookies",
+                        "bot_detection",
+                        false,
+                    );
+                }
+            }
+
             try {
                 entry = await this.ytdlp.dumpJson(target, {
                     noPlaylist: true,
                     format: "bestaudio[acodec=opus]/bestaudio/best",
                     ...(primaryExtractorArgs ? { extractorArgs: primaryExtractorArgs } : {}),
+                    skipCookies: cookieState.isCookieBlocked,
+                    timeoutMs: 12_000,
                     signal,
                 });
                 fmt = await selectPlayableFormatFromEntry(entry, signal);
                 if (fmt?.url && entry) {
                     this.botBlockedUntil = 0;
+                    this.cookieBotBlockedUntil = 0;
                     this.entryCache.store(cacheKeys, entry);
                 }
             } catch (err) {
@@ -474,7 +646,8 @@ export class YouTubeProvider implements MediaProvider {
         }
 
         let sawBotDetection =
-            primaryErr instanceof ProviderError && primaryErr.category === "bot_detection";
+            fastBotDetected ||
+            (primaryErr instanceof ProviderError && primaryErr.category === "bot_detection");
 
         // Dual-stack VPS hosts often trigger bot-checks on IPv6 while IPv4 passes; skip if already forced to IPv4
         if (!fmt?.url && sawBotDetection && !this.ytdlp.isForceIpv4?.() && !signal?.aborted) {
@@ -483,7 +656,9 @@ export class YouTubeProvider implements MediaProvider {
                     noPlaylist: true,
                     format: "bestaudio[acodec=opus]/bestaudio/best",
                     ...(primaryExtractorArgs ? { extractorArgs: primaryExtractorArgs } : {}),
+                    skipCookies: cookieState.isCookieBlocked,
                     forceIpv4: true,
+                    timeoutMs: 10_000,
                     signal,
                 });
                 const ipv4Fmt = await selectPlayableFormatFromEntry(ipv4Entry, signal);
@@ -491,6 +666,7 @@ export class YouTubeProvider implements MediaProvider {
                     entry = ipv4Entry;
                     fmt = ipv4Fmt;
                     this.botBlockedUntil = 0;
+                    this.cookieBotBlockedUntil = 0;
                     this.entryCache.store(cacheKeys, ipv4Entry);
                 }
             } catch (ipv4Err) {
@@ -517,7 +693,8 @@ export class YouTubeProvider implements MediaProvider {
                                 format: "bestaudio/best",
                                 extractorArgs,
                                 forceIpv4: sawBotDetection,
-                                skipCookies,
+                                skipCookies: skipCookies || cookieState.isCookieBlocked,
+                                timeoutMs: 10_000,
                                 signal: raceController.signal,
                             });
                             const fallbackFmt = await selectPlayableFormatFromEntry(
@@ -538,6 +715,7 @@ export class YouTubeProvider implements MediaProvider {
                     entry = winner.fallbackEntry;
                     fmt = winner.fallbackFmt;
                     this.botBlockedUntil = 0;
+                    this.cookieBotBlockedUntil = 0;
                     this.entryCache.store(cacheKeys, winner.fallbackEntry);
                     break;
                 } catch (aggErr) {
@@ -563,8 +741,26 @@ export class YouTubeProvider implements MediaProvider {
                 }
             }
 
-            if (!fmt?.url && sawBotDetection && !hasCookies) {
-                this.botBlockedUntil = Date.now() + 90_000;
+            if (!fmt?.url && sawBotDetection) {
+                if (hasCookies) {
+                    this.cookieBlockedMtimeMs = cookieState.mtimeMs;
+                    this.cookieBotBlockedUntil = Date.now() + 180_000;
+                } else {
+                    this.botBlockedUntil = Date.now() + 180_000;
+                }
+                if (
+                    !(
+                        primaryErr instanceof ProviderError &&
+                        primaryErr.category === "bot_detection"
+                    )
+                ) {
+                    primaryErr = new ProviderError(
+                        "YouTube requested bot-verification cookies",
+                        "bot_detection",
+                        false,
+                        primaryErr,
+                    );
+                }
             }
         }
 

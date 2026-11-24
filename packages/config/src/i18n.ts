@@ -46,11 +46,17 @@ const V2_ADDITIONS_EN: JsonObject = {
                 },
             },
             login: {
+                slashOauthDescription:
+                    "Link a Google/YouTube account via device code (recommended for VPS)",
                 slashCookiesDescription:
                     "Import Netscape cookies.txt for headless/VPS YouTube playback",
                 cookiesMissingInput:
                     "Attach a Netscape `cookies.txt` file or pass cookie text (`/login cookies file:...`).",
                 cookiesImported: "YouTube cookies imported and activated for playback.",
+                oauthStartedTitle: "YouTube VPS Device Login",
+                oauthStartedBody:
+                    "1. Open **{url}** on any browser\n2. Enter code: **`{code}`**\n3. Sign in with a **secondary/burner** Google account\n\nWaiting up to **{minutes} minutes** for authorization; playback will activate automatically once approved.",
+                oauthField: "YouTube OAuth2 (VPS)",
             },
         },
     },

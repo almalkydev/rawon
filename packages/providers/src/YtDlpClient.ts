@@ -187,6 +187,7 @@ export class YtDlpClient {
     private cookiesPath: string | null;
     private visitorData: string | null;
     private potProviderUrl: string | null;
+    private potReachableCache: { url: string; ok: boolean; expiresAt: number } | null = null;
     private readonly defaultForceIpv4: boolean;
     private readonly logger?: Logger;
     private updateTimer: NodeJS.Timeout | null = null;
@@ -204,10 +205,39 @@ export class YtDlpClient {
 
     public setPotProviderUrl(url: string | null): void {
         this.potProviderUrl = url?.trim().replace(/\/+$/u, "") || null;
+        this.potReachableCache = null;
     }
 
     public getPotProviderUrl(): string | null {
         return this.potProviderUrl;
+    }
+
+    public async isPotProviderReachable(signal?: AbortSignal): Promise<boolean> {
+        const url = this.potProviderUrl;
+        if (!url) return false;
+        const now = Date.now();
+        if (
+            this.potReachableCache &&
+            this.potReachableCache.url === url &&
+            this.potReachableCache.expiresAt > now
+        ) {
+            return this.potReachableCache.ok;
+        }
+        try {
+            const res = await fetch(`${url}/ping`, {
+                method: "GET",
+                signal: signal
+                    ? AbortSignal.any([signal, AbortSignal.timeout(1_200)])
+                    : AbortSignal.timeout(1_200),
+            });
+            await res.body?.cancel().catch(() => undefined);
+            const ok = res.ok;
+            this.potReachableCache = { url, ok, expiresAt: now + 30_000 };
+            return ok;
+        } catch {
+            this.potReachableCache = { url, ok: false, expiresAt: now + 30_000 };
+            return false;
+        }
     }
 
     public isForceIpv4(): boolean {
@@ -879,7 +909,7 @@ export async function probeCandidateStreamable(
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     signal?.addEventListener("abort", onAbort, { once: true });
-    const timer = setTimeout(() => controller.abort(), 1_500);
+    const timer = setTimeout(() => controller.abort(), 4_000);
 
     try {
         const baseHeaders: Record<string, string> = {
@@ -890,7 +920,7 @@ export async function probeCandidateStreamable(
         if (!isHlsFormat(fmt)) {
             const res = await fetch(fmt.url, {
                 method: "GET",
-                headers: baseHeaders,
+                headers: { ...baseHeaders, Range: "bytes=0-63" },
                 signal: controller.signal,
             });
             await res.body?.cancel().catch(() => undefined);

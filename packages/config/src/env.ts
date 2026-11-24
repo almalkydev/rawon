@@ -34,6 +34,8 @@ const envSchema = z.object({
     SPOTIFY_CLIENT_ID: z.string().default(""),
     SPOTIFY_CLIENT_SECRET: z.string().default(""),
     SPOTIFY_MARKET: z.string().default("US"),
+    YOUTUBE_API_KEY: z.string().default(""),
+    YOUTUBE_OAUTH_REFRESH_TOKEN: z.string().default(""),
     DEVTOOLS_PORT: optionalPositiveInt(3000),
     CHROMIUM_PATH: z.string().default(""),
     DATABASE_URL: z.string().default("postgres://rawon:rawon@postgres:5432/rawon"),
@@ -78,6 +80,8 @@ export interface RawonConfig {
     spotifyClientId: string;
     spotifyClientSecret: string;
     spotifyMarket: string;
+    youtubeApiKey: string | null;
+    youtubeOauthRefreshToken: string | null;
     devtoolsPort: number;
     chromiumPath: string | null;
     databaseUrl: string;
@@ -155,6 +159,8 @@ export function loadConfig(
         spotifyClientId: parsed.SPOTIFY_CLIENT_ID.trim(),
         spotifyClientSecret: parsed.SPOTIFY_CLIENT_SECRET.trim(),
         spotifyMarket: parsed.SPOTIFY_MARKET.trim() || "US",
+        youtubeApiKey: parsed.YOUTUBE_API_KEY.trim() || null,
+        youtubeOauthRefreshToken: parsed.YOUTUBE_OAUTH_REFRESH_TOKEN.trim() || null,
         devtoolsPort: parsed.DEVTOOLS_PORT,
         chromiumPath: parsed.CHROMIUM_PATH.trim() || null,
         databaseUrl: parsed.DATABASE_URL.trim(),

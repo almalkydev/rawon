@@ -19,6 +19,13 @@ export const loginCommand: CommandDefinition = {
             )
             .addSubcommand((sub) =>
                 sub
+                    .setName("oauth")
+                    .setDescription(
+                        i18n.translate("commands.developers.login.slashOauthDescription", "en-US"),
+                    ),
+            )
+            .addSubcommand((sub) =>
+                sub
                     .setName("start")
                     .setDescription(
                         i18n.translate("commands.developers.login.slashStartDescription", "en-US"),
@@ -69,8 +76,9 @@ export const loginCommand: CommandDefinition = {
         if (sub === "status") {
             const status = await loginSvc.getStatus();
             const hasCookies = cookieStore.hasCookies();
+            const hasOauth = loginSvc.hasOAuth();
             const stateLabel =
-                status.status === "logged_in"
+                status.status === "logged_in" || hasOauth
                     ? ctx.t("commands.developers.login.sessionLoggedIn")
                     : status.status === "waiting_for_login"
                       ? ctx.t("commands.developers.login.sessionWaiting")
@@ -81,10 +89,11 @@ export const loginCommand: CommandDefinition = {
                         : ctx.t("commands.developers.login.sessionIdle");
 
             const lines = [
+                `**${ctx.t("commands.developers.login.oauthField")}:** ${hasOauth ? ctx.t("commands.developers.login.statusActive") : ctx.t("commands.developers.login.statusMissing")}`,
                 `**${ctx.t("commands.developers.login.cookieFileField")}:** ${hasCookies ? ctx.t("commands.developers.login.statusActive") : ctx.t("commands.developers.login.statusMissing")}`,
                 `**${ctx.t("commands.developers.login.googleLoginField")}:** ${stateLabel}`,
                 `**${ctx.t("commands.developers.login.lastRefreshLabel")}:** ${status.lastRefresh ? `<t:${Math.floor(status.lastRefresh / 1000)}:R>` : ctx.t("commands.developers.login.lastRefreshNever")}`,
-                `**${ctx.t("commands.developers.login.gettingStartedField")}:** ${ctx.t("commands.developers.login.gettingStartedText", { loginCmd: `\`${ctx.prefix}login start\`` })}`,
+                `**${ctx.t("commands.developers.login.gettingStartedField")}:** ${ctx.t("commands.developers.login.gettingStartedText", { loginCmd: `\`${ctx.prefix}login oauth\`` })}`,
             ].join("\n");
 
             await ctx.reply(
@@ -107,6 +116,35 @@ export const loginCommand: CommandDefinition = {
                 }),
                 true,
             );
+            return;
+        }
+
+        if (sub === "oauth") {
+            await ctx.defer(true);
+            try {
+                const session = await loginSvc.startOAuthDeviceLogin();
+                await ctx.editReply(
+                    buildNoticeContainer({
+                        colorHex: botSettings.embedColor,
+                        title: ctx.t("commands.developers.login.oauthStartedTitle"),
+                        description: ctx.t("commands.developers.login.oauthStartedBody", {
+                            url: session.verificationUrl,
+                            code: session.userCode,
+                            minutes: Math.max(1, Math.round(session.expiresIn / 60)),
+                        }),
+                    }),
+                );
+            } catch (err) {
+                await ctx.editReply(
+                    buildNoticeContainer({
+                        colorHex: botSettings.embedColor,
+                        title: ctx.t("commands.developers.login.loginError"),
+                        description: ctx.t("commands.developers.login.loginErrorDescription", {
+                            error: err instanceof Error ? err.message : String(err),
+                        }),
+                    }),
+                );
+            }
             return;
         }
 
@@ -238,7 +276,7 @@ export const loginCommand: CommandDefinition = {
             buildNoticeContainer({
                 colorHex: botSettings.embedColor,
                 description: ctx.t("commands.developers.login.invalidSubcommand", {
-                    loginUsage: `\`${ctx.prefix}login <start | cookies | status | logout>\``,
+                    loginUsage: `\`${ctx.prefix}login <oauth | cookies | start | status | logout>\``,
                 }),
             }),
             true,

@@ -48,6 +48,24 @@ const PRIMARY_CLIENTS: readonly InnerTubeClientSpec[] = [
 
 const MOBILE_CLIENTS: readonly InnerTubeClientSpec[] = [
     {
+        name: "ANDROID_VR",
+        clientId: "28",
+        clientVersion: "1.60.19",
+        userAgent:
+            "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+        clientContext: {
+            clientName: "ANDROID_VR",
+            clientVersion: "1.60.19",
+            androidSdkVersion: 32,
+            osName: "Android",
+            osVersion: "12L",
+            deviceMake: "Oculus",
+            deviceModel: "Quest 3",
+            hl: "en",
+            gl: "US",
+        },
+    },
+    {
         name: "IOS_PRODUCER",
         clientId: "92",
         clientVersion: "0.129.1",
@@ -219,6 +237,10 @@ function loadYouTubeAuthFromCookiesFile(
     } catch {
         return null;
     }
+}
+
+export function loadYouTubeCookieHeader(cookiesPath: string | null | undefined): string | null {
+    return loadYouTubeAuthFromCookiesFile(cookiesPath)?.cookieHeader ?? null;
 }
 
 function sha1SapisidHash(ts: number, cookieValue: string): string {
@@ -464,7 +486,7 @@ async function querySingleInnerTubeClient(
     visitorData: string | null,
     cookieAuth: ParsedYouTubeCookieAuth | null,
     signal?: AbortSignal,
-): Promise<YtDlpEntry | null> {
+): Promise<{ entry: YtDlpEntry | null; botDetected: boolean }> {
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     signal?.addEventListener("abort", onAbort, { once: true });
@@ -511,10 +533,15 @@ async function querySingleInnerTubeClient(
             }),
         });
 
-        if (!res.ok) return null;
+        if (!res.ok) return { entry: null, botDetected: false };
         const data = (await res.json()) as RawInnerTubePlayerResponse;
-        if (data?.playabilityStatus?.status !== "OK") {
-            return null;
+        const playStatus = data?.playabilityStatus?.status ?? "";
+        const playReason = (data?.playabilityStatus?.reason ?? "").toLowerCase();
+        if (playStatus !== "OK") {
+            const botDetected =
+                playStatus === "LOGIN_REQUIRED" &&
+                (playReason.includes("not a bot") || playReason.includes("sign in"));
+            return { entry: null, botDetected };
         }
 
         const rawAdaptive = data.streamingData?.adaptiveFormats ?? [];
@@ -546,7 +573,7 @@ async function querySingleInnerTubeClient(
         }
 
         if (formats.length === 0) {
-            return null;
+            return { entry: null, botDetected: false };
         }
 
         const details = data.videoDetails;
@@ -559,24 +586,27 @@ async function querySingleInnerTubeClient(
         const thumbs = details?.thumbnail?.thumbnails ?? [];
 
         return {
-            id: details?.videoId || videoId,
-            title: details?.title || videoId,
-            webpage_url: `https://www.youtube.com/watch?v=${videoId}`,
-            duration,
-            uploader: details?.author,
-            channel: details?.author,
-            is_live: details?.isLiveContent === true,
-            thumbnails: thumbs,
-            thumbnail: thumbs[thumbs.length - 1]?.url,
-            extractor:
-                spec.name === "VISIONOS" ? "youtube:innertube:visionos" : "youtube:innertube",
-            http_headers: {
-                "User-Agent": spec.userAgent,
+            entry: {
+                id: details?.videoId || videoId,
+                title: details?.title || videoId,
+                webpage_url: `https://www.youtube.com/watch?v=${videoId}`,
+                duration,
+                uploader: details?.author,
+                channel: details?.author,
+                is_live: details?.isLiveContent === true,
+                thumbnails: thumbs,
+                thumbnail: thumbs[thumbs.length - 1]?.url,
+                extractor:
+                    spec.name === "VISIONOS" ? "youtube:innertube:visionos" : "youtube:innertube",
+                http_headers: {
+                    "User-Agent": spec.userAgent,
+                },
+                formats,
             },
-            formats,
+            botDetected: false,
         };
     } catch {
-        return null;
+        return { entry: null, botDetected: false };
     } finally {
         clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
@@ -589,10 +619,11 @@ async function raceClientSpecs(
     visitorData: string | null,
     cookieAuth: ParsedYouTubeCookieAuth | null,
     signal?: AbortSignal,
-): Promise<YtDlpEntry | null> {
+): Promise<{ entry: YtDlpEntry | null; botDetected: boolean }> {
     const raceController = new AbortController();
     const onParentAbort = () => raceController.abort();
     signal?.addEventListener("abort", onParentAbort, { once: true });
+    let sawBotDetection = false;
 
     try {
         const entry = await Promise.any(
@@ -604,19 +635,78 @@ async function raceClientSpecs(
                     cookieAuth,
                     raceController.signal,
                 );
-                if (!res) {
+                if (res.botDetected) {
+                    sawBotDetection = true;
+                }
+                if (!res.entry) {
                     throw new Error(`InnerTube ${spec.name} returned no playable formats`);
                 }
-                return res;
+                return res.entry;
             }),
         );
         raceController.abort();
-        return entry;
+        return { entry, botDetected: false };
     } catch {
-        return null;
+        return { entry: null, botDetected: sawBotDetection };
     } finally {
         signal?.removeEventListener("abort", onParentAbort);
     }
+}
+
+export async function resolveYouTubeInnerTubePlayerWithStatus(
+    videoId: string,
+    signal?: AbortSignal,
+    options?: InnerTubePlayerOptions,
+): Promise<{ entry: YtDlpEntry | null; botDetected: boolean }> {
+    if (!videoId || signal?.aborted) return { entry: null, botDetected: false };
+
+    const visitorData = await getOrFetchYouTubeVisitorData(signal, options);
+    if (signal?.aborted) {
+        return { entry: null, botDetected: false };
+    }
+
+    let botDetected = false;
+
+    // 1. Primary VISIONOS InnerTube client (never pass web cookies to VISIONOS; it uses anonymous visitorData)
+    const primaryRes = await raceClientSpecs(videoId, PRIMARY_CLIENTS, visitorData, null, signal);
+    if (primaryRes.entry) {
+        return primaryRes;
+    }
+    if (primaryRes.botDetected) {
+        botDetected = true;
+    }
+
+    // 2. Fallback to ANDROID_VR / IOS_PRODUCER / mobile clients
+    if (!signal?.aborted) {
+        const mobileRes = await raceClientSpecs(videoId, MOBILE_CLIENTS, visitorData, null, signal);
+        if (mobileRes.entry) {
+            return mobileRes;
+        }
+        if (mobileRes.botDetected) {
+            botDetected = true;
+        }
+    }
+
+    // 3. Authenticated web/TV InnerTube clients when cookies.txt is configured
+    // Pass null visitorData so an anonymous visitor ID never conflicts with the logged-in cookie session
+    const cookieAuth = loadYouTubeAuthFromCookiesFile(options?.cookiesPath);
+    if (cookieAuth && !signal?.aborted) {
+        const authRes = await raceClientSpecs(
+            videoId,
+            AUTHENTICATED_CLIENTS,
+            null,
+            cookieAuth,
+            signal,
+        );
+        if (authRes.entry) {
+            return authRes;
+        }
+        if (authRes.botDetected) {
+            botDetected = true;
+        }
+    }
+
+    return { entry: null, botDetected };
 }
 
 /**
@@ -628,42 +718,6 @@ export async function resolveYouTubeInnerTubePlayer(
     signal?: AbortSignal,
     options?: InnerTubePlayerOptions,
 ): Promise<YtDlpEntry | null> {
-    if (!videoId || signal?.aborted) return null;
-
-    const visitorData = await getOrFetchYouTubeVisitorData(signal, options);
-    if (signal?.aborted) {
-        return null;
-    }
-
-    // 1. Primary VISIONOS InnerTube client (never pass web cookies to VISIONOS; it uses anonymous visitorData)
-    const primaryEntry = await raceClientSpecs(videoId, PRIMARY_CLIENTS, visitorData, null, signal);
-    if (primaryEntry) {
-        return primaryEntry;
-    }
-
-    // 2. Fallback to IOS_PRODUCER (works without visitorData or PO token) + mobile clients
-    if (!signal?.aborted) {
-        const mobileEntry = await raceClientSpecs(videoId, MOBILE_CLIENTS, null, null, signal);
-        if (mobileEntry) {
-            return mobileEntry;
-        }
-    }
-
-    // 3. Authenticated web/TV InnerTube clients when cookies.txt is configured
-    // Pass null visitorData so an anonymous visitor ID never conflicts with the logged-in cookie session
-    const cookieAuth = loadYouTubeAuthFromCookiesFile(options?.cookiesPath);
-    if (cookieAuth && !signal?.aborted) {
-        const authEntry = await raceClientSpecs(
-            videoId,
-            AUTHENTICATED_CLIENTS,
-            null,
-            cookieAuth,
-            signal,
-        );
-        if (authEntry) {
-            return authEntry;
-        }
-    }
-
-    return null;
+    const res = await resolveYouTubeInnerTubePlayerWithStatus(videoId, signal, options);
+    return res.entry;
 }

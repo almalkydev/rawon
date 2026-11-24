@@ -12,10 +12,13 @@ import {
     LyricsService,
     listAudioFormatCandidates,
     ProviderRegistry,
+    parseIso8601DurationSeconds,
     rankTrackCandidates,
     SpotifyProvider,
+    searchYouTubeDataApi,
     searchYouTubeMusicInnerTube,
     selectBestMatchingTrack,
+    YouTubeOAuthManager,
     YouTubeProvider,
     YtDlpClient,
 } from "@rawon/providers";
@@ -1267,5 +1270,117 @@ describe("Provider Query Classification, Spotify Resolution & Lyrics", () => {
         } finally {
             rmSync(tmpDir, { recursive: true, force: true });
         }
+    });
+
+    it("supports Classic YouTube Data API v3 search/hydration and fast-fails VPS InnerTube LOGIN_REQUIRED with 0 yt-dlp spawns", async () => {
+        expect(parseIso8601DurationSeconds("PT3M5S")).toBe(185);
+        expect(parseIso8601DurationSeconds("PT1H2M10S")).toBe(3730);
+
+        let ytdlpCalls = 0;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: string | URL) => {
+                const url = String(input);
+                if (url.includes("googleapis.com/youtube/v3/search")) {
+                    return new Response(
+                        JSON.stringify({
+                            items: [{ id: { videoId: "FJX0JPXD2nM" } }],
+                        }),
+                        { status: 200 },
+                    );
+                }
+                if (url.includes("googleapis.com/youtube/v3/videos")) {
+                    return new Response(
+                        JSON.stringify({
+                            items: [
+                                {
+                                    id: "FJX0JPXD2nM",
+                                    snippet: {
+                                        title: "we fell in love in october",
+                                        channelTitle: "girl in red",
+                                        thumbnails: {
+                                            high: {
+                                                url: "https://i.ytimg.com/vi/FJX0JPXD2nM/hqdefault.jpg",
+                                            },
+                                        },
+                                    },
+                                    contentDetails: { duration: "PT3M5S" },
+                                },
+                            ],
+                        }),
+                        { status: 200 },
+                    );
+                }
+                if (url.includes("youtubei/v1/player")) {
+                    return new Response(
+                        JSON.stringify({
+                            playabilityStatus: {
+                                status: "LOGIN_REQUIRED",
+                                reason: "Sign in to confirm you’re not a bot",
+                            },
+                        }),
+                        { status: 200 },
+                    );
+                }
+                if (url.includes("oauth2/token")) {
+                    return new Response(
+                        JSON.stringify({
+                            access_token: "ya29.test_access_token",
+                            expires_in: 3600,
+                        }),
+                        { status: 200 },
+                    );
+                }
+                return new Response("", { status: 404 });
+            }),
+        );
+
+        const apiTracks = await searchYouTubeDataApi(
+            "We Fell in Love in October",
+            "AIza_test_key",
+            5,
+            "youtube",
+        );
+        expect(apiTracks?.[0]?.id).toBe("FJX0JPXD2nM");
+        expect(apiTracks?.[0]?.duration).toBe(185);
+        expect(apiTracks?.[0]?.author).toBe("girl in red");
+
+        const ytdlpStub = {
+            getCookiesPath: () => null,
+            getVisitorData: () => "Cgt0ZXN0VmlzaXRvckRhdGE%3D",
+            getPotProviderUrl: () => null,
+            isPotProviderReachable: async () => false,
+            isForceIpv4: () => false,
+            dumpJson: vi.fn(async () => {
+                ytdlpCalls += 1;
+                throw new ProviderError(
+                    "YouTube requested bot-verification cookies",
+                    "bot_detection",
+                    false,
+                );
+            }),
+        } as unknown as YtDlpClient;
+
+        const yt = new YouTubeProvider(ytdlpStub, { youtubeApiKey: "AIza_test_key" });
+        const directRes = await yt.search("We Fell in Love in October", 5, "direct");
+        expect(directRes.items[0]?.id).toBe("FJX0JPXD2nM");
+
+        await expect(
+            yt.getStreamDescriptor({
+                id: "FJX0JPXD2nM",
+                title: "we fell in love in october",
+                url: "https://www.youtube.com/watch?v=FJX0JPXD2nM",
+                duration: 185,
+                thumbnail: "",
+                author: "girl in red",
+                provider: "youtube",
+            }),
+        ).rejects.toMatchObject({ category: "bot_detection" });
+        // Fast-failed directly from InnerTube LOGIN_REQUIRED with 0 slow yt-dlp subprocess spawns
+        expect(ytdlpCalls).toBe(0);
+
+        const oauth = new YouTubeOAuthManager({ initialRefreshToken: "1//test_refresh" });
+        expect(oauth.hasRefreshToken()).toBe(true);
+        expect(await oauth.getValidAccessToken()).toBe("ya29.test_access_token");
     });
 });

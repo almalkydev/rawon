@@ -15,7 +15,13 @@ async function bootstrapWorker(): Promise<void> {
         scope: "rawon-worker",
         level: config.debugMode ? "debug" : "info",
         pretty: !config.isDev ? false : undefined,
-        redactSecrets: [config.redisUrl, config.stegripeApiLyricsToken, config.spotifyClientSecret],
+        redactSecrets: [
+            config.redisUrl,
+            config.stegripeApiLyricsToken,
+            config.spotifyClientSecret,
+            config.youtubeApiKey ?? "",
+            config.youtubeOauthRefreshToken ?? "",
+        ],
     });
 
     logger.info(
@@ -67,6 +73,9 @@ async function bootstrapWorker(): Promise<void> {
         spotifyClientId: config.spotifyClientId,
         spotifyClientSecret: config.spotifyClientSecret,
         spotifyMarket: config.spotifyMarket,
+        youtubeApiKey: config.youtubeApiKey,
+        youtubeOauthRefreshToken: config.youtubeOauthRefreshToken,
+        dataDir: config.dataDir,
         stegripeApiUrl: config.stegripeApiUrl,
         stegripeApiLyricsToken: config.stegripeApiLyricsToken,
         metadataCache,

@@ -1,6 +1,11 @@
 import { existsSync } from "node:fs";
 import type { DatabaseStore } from "@rawon/database";
-import { getOrFetchYouTubeVisitorData, type YtDlpClient } from "@rawon/providers";
+import {
+    getOrFetchYouTubeVisitorData,
+    type YouTubeDeviceCodeSession,
+    type YouTubeOAuthManager,
+    type YtDlpClient,
+} from "@rawon/providers";
 import type { AuthSessionRecord, Logger } from "@rawon/shared";
 import puppeteer, { type Browser } from "puppeteer-core";
 import {
@@ -33,6 +38,7 @@ export class GoogleLoginService {
     private readonly store: DatabaseStore;
     private readonly cookieStore: CookieStore;
     private readonly ytdlp: YtDlpClient;
+    private readonly oauthManager: YouTubeOAuthManager | null;
     private readonly devtoolsPort: number;
     private readonly chromiumPath: string | null;
     private readonly logger?: Logger;
@@ -44,6 +50,7 @@ export class GoogleLoginService {
         store: DatabaseStore;
         cookieStore: CookieStore;
         ytdlp: YtDlpClient;
+        oauthManager?: YouTubeOAuthManager | null;
         devtoolsPort?: number;
         chromiumPath?: string | null;
         logger?: Logger;
@@ -51,9 +58,45 @@ export class GoogleLoginService {
         this.store = options.store;
         this.cookieStore = options.cookieStore;
         this.ytdlp = options.ytdlp;
+        this.oauthManager = options.oauthManager ?? null;
         this.devtoolsPort = options.devtoolsPort ?? 3000;
         this.chromiumPath = options.chromiumPath ?? null;
         this.logger = options.logger;
+    }
+
+    public hasOAuth(): boolean {
+        return Boolean(this.oauthManager?.hasRefreshToken());
+    }
+
+    public async startOAuthDeviceLogin(): Promise<YouTubeDeviceCodeSession> {
+        if (!this.oauthManager) {
+            throw new Error("YouTube OAuth manager is not initialized.");
+        }
+        await this.store.saveAuthSession({
+            id: 1,
+            status: "waiting_for_login",
+            error: null,
+        });
+
+        return this.oauthManager.startDeviceFlow({
+            onAuthorized: async () => {
+                await this.store.saveAuthSession({
+                    id: 1,
+                    status: "logged_in",
+                    lastRefresh: Date.now(),
+                    error: null,
+                });
+                this.logger?.info("YouTube OAuth2 device authorization completed successfully");
+            },
+            onError: async (err) => {
+                this.logger?.warn({ err }, "YouTube OAuth2 device authorization failed");
+                await this.store.saveAuthSession({
+                    id: 1,
+                    status: "error",
+                    error: err.message,
+                });
+            },
+        });
     }
 
     public async getStatus(): Promise<AuthSessionRecord> {
@@ -151,6 +194,7 @@ export class GoogleLoginService {
             this.refreshTimer = null;
         }
         this.cookieStore.clear();
+        this.oauthManager?.clear();
         this.ytdlp.setCookiesPath(null);
         this.ytdlp.setVisitorData(null);
 

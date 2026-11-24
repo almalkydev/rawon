@@ -19,6 +19,7 @@ import {
     type PersistedQueueSession,
     type PlaybackStatus,
     type PlayerState,
+    ProviderError,
     type QueuedTrack,
     type StreamDescriptor,
     type Track,
@@ -1055,7 +1056,12 @@ export class GuildMusicSession extends EventEmitter {
         const canonicalKey = getCanonicalTrackKey(queued.track);
         this.activeDescriptorCache.delete(canonicalKey);
 
-        const canRecover = this.recoveryAttemptsForTrack < 2 && !(error instanceof ValidationError);
+        const isTerminalProviderFailure =
+            error instanceof ProviderError && error.retryable === false;
+        const canRecover =
+            this.recoveryAttemptsForTrack < 2 &&
+            !(error instanceof ValidationError) &&
+            !isTerminalProviderFailure;
 
         if (canRecover) {
             this.recoveryAttemptsForTrack += 1;

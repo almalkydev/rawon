@@ -148,6 +148,7 @@ export class MultiBotSupervisor {
                         store: this.store,
                         cookieStore: this.cookieStore,
                         ytdlp: this.providers.ytdlp,
+                        oauthManager: this.providers.youtubeOAuth,
                         devtoolsPort: this.config.devtoolsPort,
                         chromiumPath: this.config.chromiumPath,
                         logger: this.logger,

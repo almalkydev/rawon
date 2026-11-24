@@ -7,9 +7,11 @@ import {
 } from "@rawon/shared";
 import type { ClassifiedQuery, MediaProvider, ProviderHealth, QueryKind } from "./interfaces.js";
 import { classifyQuery } from "./QueryClassifier.js";
+import { resolveSoundCloudStreamFast, searchSoundCloudFast } from "./soundcloudApi.js";
 import { rankTrackCandidates } from "./trackMatcher.js";
 import {
     isHlsFormat,
+    probeCandidateStreamable,
     ResolvedEntryCache,
     selectPlayableFormatFromEntry,
     type YtDlpClient,
@@ -60,10 +62,19 @@ export class SoundCloudProvider implements MediaProvider {
     }
 
     public async search(query: string, limit = 10): Promise<SearchResult> {
+        const fastItems = await searchSoundCloudFast(query, limit).catch(() => null);
+        if (fastItems && fastItems.length > 0) {
+            return {
+                type: "selection",
+                items: fastItems,
+            };
+        }
+
         const fetchLimit = Math.max(limit, 8);
         const dump = await this.ytdlp.dumpJson(`scsearch${fetchLimit}:${query}`, {
             flatPlaylist: true,
             playlistEnd: fetchLimit,
+            skipCookies: true,
         });
         const items: Track[] = [];
         for (const entry of dump.entries ?? []) {
@@ -142,6 +153,23 @@ export class SoundCloudProvider implements MediaProvider {
         track: Track,
         signal?: AbortSignal,
     ): Promise<StreamDescriptor> {
+        const fastDescriptor = await resolveSoundCloudStreamFast(track, signal).catch(() => null);
+        if (fastDescriptor) {
+            const isPlayable = await probeCandidateStreamable(
+                {
+                    url: fastDescriptor.url,
+                    ext: fastDescriptor.container,
+                    protocol: fastDescriptor.container === "m3u8" ? "m3u8_native" : "https",
+                    http_headers: fastDescriptor.headers,
+                },
+                fastDescriptor.headers,
+                signal,
+            );
+            if (isPlayable) {
+                return fastDescriptor;
+            }
+        }
+
         const cacheKeys = [track.url, track.id];
         let entry = this.entryCache.get(cacheKeys);
         let fmt = entry
@@ -155,6 +183,7 @@ export class SoundCloudProvider implements MediaProvider {
             entry = await this.ytdlp.dumpJson(track.url, {
                 noPlaylist: true,
                 format: "bestaudio/best",
+                skipCookies: true,
                 signal,
             });
             fmt = await selectPlayableFormatFromEntry(entry, signal, {

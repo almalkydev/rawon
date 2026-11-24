@@ -24,6 +24,7 @@ import {
 } from "./trackMatcher.js";
 import { YouTubeProvider } from "./YouTubeProvider.js";
 import type { YtDlpClient } from "./YtDlpClient.js";
+import { YouTubeOAuthManager } from "./youtubeOAuth.js";
 
 function cleanFallbackQueryText(raw: string): string {
     return raw
@@ -69,6 +70,9 @@ export interface ProviderRegistryOptions {
     spotifyClientId?: string;
     spotifyClientSecret?: string;
     spotifyMarket?: string;
+    youtubeApiKey?: string | null;
+    youtubeOauthRefreshToken?: string | null;
+    dataDir?: string | null;
     stegripeApiUrl?: string;
     stegripeApiLyricsToken?: string;
     metadataCache?: MetadataCacheClient;
@@ -77,6 +81,7 @@ export interface ProviderRegistryOptions {
 
 export class ProviderRegistry {
     public readonly youtube: YouTubeProvider;
+    public readonly youtubeOAuth: YouTubeOAuthManager;
     public readonly soundcloud: SoundCloudProvider;
     public readonly spotify: SpotifyProvider;
     public readonly directHttp: DirectHttpProvider;
@@ -92,7 +97,14 @@ export class ProviderRegistry {
         this.metadataCache = options.metadataCache;
         this.logger = options.logger;
 
-        this.youtube = new YouTubeProvider(options.ytdlp);
+        this.youtubeOAuth = new YouTubeOAuthManager({
+            dataDir: options.dataDir,
+            initialRefreshToken: options.youtubeOauthRefreshToken,
+        });
+        this.youtube = new YouTubeProvider(options.ytdlp, {
+            youtubeApiKey: options.youtubeApiKey,
+            oauthManager: this.youtubeOAuth,
+        });
         this.soundcloud = new SoundCloudProvider(options.ytdlp);
         this.directHttp = new DirectHttpProvider();
         this.spotify = new SpotifyProvider({
@@ -426,8 +438,11 @@ export class ProviderRegistry {
                     return targetAlt === "soundcloud"
                         ? await this.soundcloud.getStreamDescriptor(candidate, signal)
                         : await this.youtube.getStreamDescriptor(candidate, signal);
-                } catch {
-                    // Try next fallback candidate cleanly
+                } catch (fallbackErr) {
+                    this.logger?.warn(
+                        { err: fallbackErr, targetAlt, candidate: candidate.url },
+                        "Fallback provider candidate failed to resolve stream",
+                    );
                 }
             }
         }
